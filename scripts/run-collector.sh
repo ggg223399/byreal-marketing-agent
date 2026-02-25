@@ -4,9 +4,11 @@
 set -euo pipefail
 
 PROJECT_DIR="$HOME/nanoclaw"                       # ← adjust to your NanoClaw root
-NODE_BIN="$(dirname "$(which node)" 2>/dev/null)"  # auto-detect from PATH; override if needed
+NODE_BIN="$(dirname "$(which node)" 2>/dev/null)"    # auto-detect from PATH; override if needed
+CLAUDE_BIN="$(dirname "$(which claude)" 2>/dev/null)" # claude CLI needed by classifier
 
-export PATH="$NODE_BIN:$PATH"
+export PATH="$NODE_BIN:$CLAUDE_BIN:$PATH"
+unset CLAUDECODE 2>/dev/null || true  # prevent nested-session error when called from Claude Code
 
 cd "$PROJECT_DIR"
 
