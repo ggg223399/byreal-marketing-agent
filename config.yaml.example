@@ -1,0 +1,43 @@
+# Copy to config.yaml and fill in your webhook URLs
+
+data_source:
+  type: twitterapi_io  # Options: mock, twitterapi_io, xpoz
+  api_key: ""  # Set via DATA_SOURCE_API_KEY env var or here
+
+monitoring:
+  accounts_tier1:
+    - "@solana"
+    - "@aave"
+    - "@realJames333"
+  accounts_partners:
+    - "@elonmusk"
+  keywords:
+    - "DeFi"
+    - "liquidity"
+    - "yield"
+    - "rwa"
+  polling_interval_minutes: 10
+
+classification:
+  model: "claude-haiku-4-5"
+  temperature: 0
+
+notifications:
+  urgent_channel: "urgent-signals"
+  digest_channel: "daily-digest"
+  all_channel: "all-signals"
+  discord_webhook_url: "<your-all-signals-webhook>"
+  digest_webhook_url: "<your-daily-digest-webhook>"  # Discord webhook URL for #daily-digest channel
+  urgent_webhook_url: "<your-urgent-signals-webhook>"  # Discord webhook URL for #urgent-signals channel
+  digest_time: "23:00"
+  digest_timezone: "Asia/Shanghai"
+
+governance:
+  max_replies_per_hour: 5
+  max_replies_per_day: 20
+  blacklist:
+    - "@spam_account"
+  risk_keywords:
+    - "lawsuit"
+    - "hack"
+    - "rug"
