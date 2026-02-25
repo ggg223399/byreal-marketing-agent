@@ -42,14 +42,20 @@ Twitter 营销情报采集 + AI 分类 + Discord 团队审核，封装为 NanoCl
 └── SKILL.md            # NanoClaw 安装指南
 ```
 
-## 快速开始
+## 安装
 
-1. 确保有运行中的 NanoClaw 实例
-2. 按 `SKILL.md` 的步骤安装（可用 Claude Code 辅助）
-3. 配置 `config.yaml` 和 `.env`
-4. 设置 cron 定时采集
+在你的 NanoClaw 目录下：
 
-完整安装步骤见 [SKILL.md](./SKILL.md)。
+```bash
+git clone https://github.com/ggg223399/byreal-marketing-agent skills/byreal-marketing-agent
+claude
+```
+
+然后告诉 Claude：
+
+> 按照 skills/byreal-marketing-agent/SKILL.md 安装营销 agent
+
+Claude Code 会处理所有依赖安装、代码集成、数据库初始化和 cron 配置。
 
 ## Discord 命令
 
