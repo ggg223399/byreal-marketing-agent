@@ -134,7 +134,19 @@ Format as:
 • Source: **twitterapi_io**
 ```
 
-### 7) `help` / `commands`
+### 7) `collect` / `fetch` / `pull`
+
+Write a trigger file to request an on-demand collection (host cron picks it up within 1 minute):
+```bash
+echo "$(date -Iseconds)" > /workspace/extra/data/collect-trigger
+```
+
+Reply:
+```
+**🔄 Collection triggered** — results in ~1 minute. Use `show signals` to check.
+```
+
+### 8) `help` / `commands`
 
 ```
 **📋 Commands**
@@ -146,6 +158,7 @@ Format as:
 `reject #N` — discard signal
 `show config` — view settings
 `status` — system stats
+`collect` — fetch latest tweets now
 ```
 
 ## Formatting Rules

@@ -124,6 +124,25 @@ async function main() {
     }
   }
 
+  // Post collection summary to all-signals channel
+  if (config.notifications.discordWebhookUrl) {
+    try {
+      await fetch(config.notifications.discordWebhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: `📡 **Collection Summary** · ${new Date().toLocaleString('zh-CN', { timeZone: config.notifications.digestTimezone })}\n` +
+            `• Fetched: **${tweets.length}** tweets\n` +
+            `• New: **${stored}** · Duplicates: **${skipped}** · 🔴 Red: **${redSignals.length}**`,
+        }),
+      });
+    } catch (err: unknown) {
+      logJson('error', {
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   logJson('collect', {
     fetched: tweets.length,
     stored,
