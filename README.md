@@ -44,19 +44,30 @@ Twitter 营销情报采集 + AI 分类 + Discord 团队审核，封装为 NanoCl
 
 ## 安装
 
-在你的 NanoClaw 目录下：
+### 1. 克隆到 NanoClaw 目录
 
 ```bash
-cd /path/to/your/nanoclaw
+cd /path/to/your/nanoclaw    # 替换为你的 NanoClaw 实际路径
 git clone https://github.com/ggg223399/byreal-marketing-agent skills/byreal-marketing-agent
+```
+
+### 2. 打开 Claude Code
+
+```bash
 claude
 ```
 
-然后告诉 Claude：
+### 3. 输入安装命令
 
-> 按照 skills/byreal-marketing-agent/SKILL.md 安装营销 agent
+打开 Claude Code 后，复制粘贴以下内容并回车：
 
-Claude Code 会处理所有依赖安装、代码集成、数据库初始化和 cron 配置。
+```
+按照 skills/byreal-marketing-agent/SKILL.md 安装营销 agent
+```
+
+Claude Code 会自动完成：依赖安装、代码集成、数据库初始化、cron 定时任务配置。
+
+> **前置条件**：需要已部署运行的 [NanoClaw](https://github.com/qwibitai/NanoClaw) 实例、[TwitterAPI.io](https://twitterapi.io) API Key、Discord Server 及 Webhook。详见 [SKILL.md](./SKILL.md)。
 
 ## Discord 命令
 
