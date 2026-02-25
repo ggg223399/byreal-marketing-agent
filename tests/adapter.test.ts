@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MockAdapter } from '../collector/adapters/mock.js';
 import { TwitterApiIoAdapter } from '../collector/adapters/twitterapiio.js';
+import { TwitterV2Adapter } from '../collector/adapters/twitter-v2.js';
 import { XpozAdapter } from '../collector/adapters/xpoz.js';
 import type { CollectorConfig } from '../types/index.js';
 
@@ -83,6 +84,34 @@ describe('TwitterApiIoAdapter', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(String(fetchMock.mock.calls[0][0])).toContain('query=');
     expect(String(fetchMock.mock.calls[1][0])).toContain('query=DeFi');
+    expect(String(fetchMock.mock.calls[0][0])).toContain('count=5');
+    expect(String(fetchMock.mock.calls[1][0])).toContain('count=5');
+  });
+
+  it('caps returned tweets even if upstream returns more than requested', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        response(200, {
+          tweets: [
+            { id: '1', url: 'u1', text: 't1', createdAt: '2026-01-01T00:00:00.000Z', author: { userName: 'a' } },
+            { id: '2', url: 'u2', text: 't2', createdAt: '2026-01-01T00:00:00.000Z', author: { userName: 'a' } },
+            { id: '3', url: 'u3', text: 't3', createdAt: '2026-01-01T00:00:00.000Z', author: { userName: 'a' } },
+            { id: '4', url: 'u4', text: 't4', createdAt: '2026-01-01T00:00:00.000Z', author: { userName: 'a' } },
+          ],
+          has_next_page: false,
+          next_cursor: '',
+        })
+      )
+    );
+
+    const tweets = await new TwitterApiIoAdapter().fetchTweets({
+      ...config,
+      dataSource: { ...config.dataSource, maxTweetsPerQuery: 2 },
+      monitoring: { ...config.monitoring, keywords: [] },
+    });
+
+    expect(tweets).toHaveLength(2);
   });
 
   it('maps API tweet shape into RawTweet', async () => {
@@ -227,5 +256,53 @@ describe('TwitterApiIoAdapter', () => {
     );
     const out = await new TwitterApiIoAdapter().fetchTweets({ ...config, monitoring: { ...config.monitoring, keywords: [] } });
     expect(out[0].created_at).toBe(1767312000);
+  });
+});
+
+describe('TwitterV2Adapter', () => {
+  const v2Config: CollectorConfig = {
+    ...config,
+    dataSource: {
+      type: 'twitter_v2',
+      apiKey: 'bearer-token',
+    },
+  };
+
+  it('uses maxTweetsPerQuery for output and clamps request min to 10', async () => {
+    const fetchMock = vi.fn(async () =>
+      response(200, {
+        data: Array.from({ length: 12 }, (_, i) => ({
+          id: String(i + 1),
+          text: `tweet-${i + 1}`,
+          created_at: '2026-01-01T00:00:00.000Z',
+          author_id: 'user-1',
+          public_metrics: { retweet_count: 0, reply_count: 0, like_count: 0, quote_count: 0 },
+        })),
+        includes: { users: [{ id: 'user-1', username: 'alice' }] },
+      })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const tweets = await new TwitterV2Adapter().fetchTweets({
+      ...v2Config,
+      dataSource: { ...v2Config.dataSource, maxTweetsPerQuery: 5 },
+      monitoring: { ...v2Config.monitoring, keywords: [] },
+    });
+
+    expect(tweets).toHaveLength(5);
+    expect(String(fetchMock.mock.calls[0][0])).toContain('max_results=10');
+  });
+
+  it('clamps request max_results to 100 when config is too large', async () => {
+    const fetchMock = vi.fn(async () => response(200, { data: [], includes: { users: [] } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await new TwitterV2Adapter().fetchTweets({
+      ...v2Config,
+      dataSource: { ...v2Config.dataSource, maxTweetsPerQuery: 500 },
+      monitoring: { ...v2Config.monitoring, keywords: [] },
+    });
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain('max_results=100');
   });
 });

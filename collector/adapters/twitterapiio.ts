@@ -3,9 +3,24 @@ import { DataSourceAdapter, RawTweet, CollectorConfig } from '../../../types/ind
 const BASE_URL = 'https://api.twitterapi.io';
 const RETRY_DELAY_MS = 2000;
 const FETCH_TIMEOUT_MS = 15000;
+const DEFAULT_MAX_TWEETS_PER_QUERY = 5;
+const API_MAX_TWEETS_PER_QUERY = 100;
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function normalizeMaxTweetsPerQuery(value: number | undefined): number {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_MAX_TWEETS_PER_QUERY;
+  }
+
+  const normalized = Math.floor(value as number);
+  if (normalized < 1) {
+    return DEFAULT_MAX_TWEETS_PER_QUERY;
+  }
+
+  return Math.min(normalized, API_MAX_TWEETS_PER_QUERY);
 }
 
 async function fetchWithRetry(url: string, options: RequestInit, retries = 1): Promise<Response> {
@@ -87,7 +102,7 @@ async function searchTweets(query: string, apiKey: string, count: number): Promi
   }
 
   const data = (await response.json()) as ApiResponse;
-  return data.tweets ?? [];
+  return (data.tweets ?? []).slice(0, count);
 }
 
 export class TwitterApiIoAdapter implements DataSourceAdapter {
@@ -95,6 +110,7 @@ export class TwitterApiIoAdapter implements DataSourceAdapter {
 
   async fetchTweets(config: CollectorConfig): Promise<RawTweet[]> {
     const apiKey = config.dataSource.apiKey ?? '';
+    const maxTweetsPerQuery = normalizeMaxTweetsPerQuery(config.dataSource.maxTweetsPerQuery);
     const seen = new Set<string>();
     const allTweets: ApiTweet[] = [];
 
@@ -105,7 +121,7 @@ export class TwitterApiIoAdapter implements DataSourceAdapter {
 
     if (accounts.length > 0) {
       const accountQuery = accounts.map(a => `from:${a}`).join(' OR ');
-      const tweets = await searchTweets(accountQuery, apiKey, config.dataSource.maxTweetsPerQuery ?? 5);
+      const tweets = await searchTweets(accountQuery, apiKey, maxTweetsPerQuery);
       allTweets.push(...tweets);
     }
 
@@ -116,7 +132,7 @@ export class TwitterApiIoAdapter implements DataSourceAdapter {
 
     if (config.monitoring.keywords.length > 0) {
       const keywordQuery = config.monitoring.keywords.join(' OR ');
-      const tweets = await searchTweets(keywordQuery, apiKey, config.dataSource.maxTweetsPerQuery ?? 5);
+      const tweets = await searchTweets(keywordQuery, apiKey, maxTweetsPerQuery);
       allTweets.push(...tweets);
     }
 

@@ -3,9 +3,32 @@ import type { DataSourceAdapter, RawTweet, CollectorConfig } from '../../types/i
 const BASE_URL = 'https://api.twitter.com/2';
 const FETCH_TIMEOUT_MS = 15000;
 const INTER_QUERY_DELAY_MS = 1500;
+const DEFAULT_MAX_TWEETS_PER_QUERY = 5;
+const API_MIN_MAX_RESULTS = 10;
+const API_MAX_MAX_RESULTS = 100;
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function normalizeDesiredMaxTweetsPerQuery(value: number | undefined): number {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_MAX_TWEETS_PER_QUERY;
+  }
+
+  const normalized = Math.floor(value as number);
+  if (normalized < 1) {
+    return DEFAULT_MAX_TWEETS_PER_QUERY;
+  }
+
+  return Math.min(normalized, API_MAX_MAX_RESULTS);
+}
+
+function toTwitterApiMaxResults(desiredMaxTweetsPerQuery: number): number {
+  return Math.min(
+    API_MAX_MAX_RESULTS,
+    Math.max(API_MIN_MAX_RESULTS, desiredMaxTweetsPerQuery)
+  );
 }
 
 async function fetchWithTimeout(url: string, options: RequestInit): Promise<Response> {
@@ -63,11 +86,13 @@ function mapTweet(tweet: TwitterTweet, usersMap: Map<string, string>): RawTweet 
 async function searchRecent(
   query: string,
   bearerToken: string,
-  usersMap: Map<string, string>
+  usersMap: Map<string, string>,
+  maxTweetsPerQuery: number
 ): Promise<TwitterTweet[]> {
+  const maxResults = toTwitterApiMaxResults(maxTweetsPerQuery);
   const params = new URLSearchParams({
     query,
-    max_results: '100',
+    max_results: String(maxResults),
     'tweet.fields': 'created_at,author_id,public_metrics',
     expansions: 'author_id',
     'user.fields': 'username',
@@ -93,7 +118,7 @@ async function searchRecent(
     usersMap.set(user.id, user.username);
   }
 
-  return data.data ?? [];
+  return (data.data ?? []).slice(0, maxTweetsPerQuery);
 }
 
 export class TwitterV2Adapter implements DataSourceAdapter {
@@ -101,6 +126,7 @@ export class TwitterV2Adapter implements DataSourceAdapter {
 
   async fetchTweets(config: CollectorConfig): Promise<RawTweet[]> {
     const bearerToken = config.dataSource.apiKey ?? '';
+    const maxTweetsPerQuery = normalizeDesiredMaxTweetsPerQuery(config.dataSource.maxTweetsPerQuery);
     if (!bearerToken) {
       throw new Error(
         '[TwitterV2Adapter] 缺少 Bearer Token。请在 .env 设置 DATA_SOURCE_API_KEY 或在 config.yaml 设置 api_key。'
@@ -119,7 +145,7 @@ export class TwitterV2Adapter implements DataSourceAdapter {
 
     if (accounts.length > 0) {
       const query = accounts.map(a => `from:${a}`).join(' OR ');
-      const tweets = await searchRecent(query, bearerToken, usersMap);
+      const tweets = await searchRecent(query, bearerToken, usersMap, maxTweetsPerQuery);
       allTweets.push(...tweets);
     }
 
@@ -127,7 +153,7 @@ export class TwitterV2Adapter implements DataSourceAdapter {
     if (config.monitoring.keywords.length > 0) {
       if (accounts.length > 0) await sleep(INTER_QUERY_DELAY_MS);
       const query = config.monitoring.keywords.join(' OR ');
-      const tweets = await searchRecent(query, bearerToken, usersMap);
+      const tweets = await searchRecent(query, bearerToken, usersMap, maxTweetsPerQuery);
       allTweets.push(...tweets);
     }
 
