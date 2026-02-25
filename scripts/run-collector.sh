@@ -1,13 +1,12 @@
 #!/bin/bash
 # Collector runner for cron — sets up environment properly
+# Edit PROJECT_DIR and NODE_BIN to match your installation.
 set -euo pipefail
 
-PROJECT_DIR="/home/james/Work/Apps/byreal-marketing-agent"
-LOG_FILE="$PROJECT_DIR/logs/collector.log"
-NODE_BIN="/home/james/.nvm/versions/node/v24.13.1/bin"
-CLAUDE_BIN="/home/james/.local/bin"
+PROJECT_DIR="$HOME/nanoclaw"                       # ← adjust to your NanoClaw root
+NODE_BIN="$(dirname "$(which node)" 2>/dev/null)"  # auto-detect from PATH; override if needed
 
-export PATH="$NODE_BIN:$CLAUDE_BIN:$PATH"
+export PATH="$NODE_BIN:$PATH"
 
 cd "$PROJECT_DIR"
 
@@ -16,6 +15,8 @@ set -a
 source .env
 set +a
 
+mkdir -p logs
+
 # Run collector with timestamp
-echo "--- $(date -Iseconds) ---" >> "$LOG_FILE"
-npx tsx collector/collect.ts >> "$LOG_FILE" 2>&1
+echo "--- $(date -Iseconds) ---" >> logs/collector.log
+npx tsx collector/collect.ts >> logs/collector.log 2>&1

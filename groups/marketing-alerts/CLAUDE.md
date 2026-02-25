@@ -28,7 +28,7 @@ You are running inside a Docker container. Use these paths:
 Query pending signals (no approval decision yet):
 ```bash
 sqlite3 -header -column /workspace/extra/data/signals.db \
-  "SELECT s.id, s.author, s.signal_class, printf('%.2f', s.confidence) as conf, s.alert_level, substr(s.content, 1, 80) as preview FROM signals s LEFT JOIN approvals a ON s.id = a.signal_id WHERE a.id IS NULL ORDER BY s.created_at DESC LIMIT 10;"
+  "SELECT s.id, s.author, s.signal_class, printf('%.2f', s.confidence) as conf, s.alert_level, substr(s.content, 1, 80) as preview, s.url FROM signals s LEFT JOIN approvals a ON s.id = a.signal_id WHERE a.id IS NULL ORDER BY s.created_at DESC LIMIT 10;"
 ```
 
 Format each signal with emoji alert level:
@@ -37,9 +37,11 @@ Format each signal with emoji alert level:
 ─────────────────────────────
 🔴 **#1** · @solana · `reply_needed` · 92%
 > Exciting partnership announcement with Byreal!
+> 🔗 https://x.com/solana/status/123456
 
 🟠 **#2** · @aave · `watch_only` · 78%
 > New liquidity pool launching next week...
+> 🔗 https://x.com/aave/status/789012
 ```
 Emoji mapping: red → 🔴, orange → 🟠, yellow → 🟡, none → ⚪
 - Use `**#N**` for signal IDs

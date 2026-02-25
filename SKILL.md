@@ -215,34 +215,79 @@ DATA_SOURCE_API_KEY=<your-twitterapiio-api-key>
 
 ### Step 10 — 注册 Discord group
 
-在 NanoClaw 的 `store/messages.db` 中注册 `marketing-alerts` group：
+首先获取 `#marketing-bot` 频道的 channel ID。启动 NanoClaw 后在该频道发一条消息，查看日志中的 `chatJid`，格式为 `dc:{channelId}`。或者用以下脚本直接列出：
 
 ```bash
-sqlite3 store/messages.db "INSERT OR REPLACE INTO registered_groups
-  (group_id, group_name, channel_type, container_config)
-  VALUES (
-    'marketing-alerts',
-    'marketing-alerts',
-    'discord',
-    '{\"additionalMounts\":[
-      {\"hostPath\":\"/absolute/path/to/data\",\"containerPath\":\"/workspace/extra/data\",\"readOnly\":false},
-      {\"hostPath\":\"/absolute/path/to/project\",\"containerPath\":\"/workspace/extra/project\",\"readOnly\":true}
-    ]}'
-  );"
+npx tsx -e "
+const { Client, GatewayIntentBits } = require('discord.js');
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+client.once('ready', async () => {
+  for (const [, guild] of client.guilds.cache) {
+    const channels = await guild.channels.fetch();
+    for (const [id, ch] of channels) {
+      if (ch && ch.isTextBased()) console.log('#' + ch.name, '→ dc:' + id);
+    }
+  }
+  client.destroy();
+});
+client.login(process.env.DISCORD_BOT_TOKEN);
+"
 ```
 
-将 `/absolute/path/to/data` 和 `/absolute/path/to/project` 替换为实际路径。
+找到 `#marketing-bot` 对应的 `dc:{channelId}` 后，在 NanoClaw 的 `store/messages.db` 中注册 group：
+
+```bash
+npx tsx -e "
+const Database = require('better-sqlite3');
+const db = new Database('store/messages.db');
+db.prepare(\`INSERT OR REPLACE INTO registered_groups
+  (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger)
+  VALUES (?, ?, ?, ?, ?, ?, ?)\`).run(
+  'dc:CHANNEL_ID_HERE',          // ← 替换为实际 channel ID
+  'marketing-alerts',
+  'marketing-alerts',
+  '',
+  new Date().toISOString(),
+  JSON.stringify({additionalMounts:[
+    {hostPath:'/absolute/path/to/nanoclaw/data', containerPath:'data', readonly:false},
+    {hostPath:'/absolute/path/to/nanoclaw',      containerPath:'project', readonly:true}
+  ]}),
+  0
+);
+console.log('Group registered');
+db.close();
+"
+```
+
+> **注意**：
+> - `jid` 必须是 `dc:{channelId}` 格式（不是频道名称）
+> - `containerPath` 使用相对路径（代码自动拼接 `/workspace/extra/` 前缀）
+> - 字段名是 `readonly`（全小写），不是 `readOnly`
+
+将 `/absolute/path/to/nanoclaw` 替换为实际的 NanoClaw 安装路径。
 
 还需要在 `~/.config/nanoclaw/mount-allowlist.json` 中添加允许挂载的路径：
 
 ```json
 {
-  "allowedPaths": [
-    "/absolute/path/to/data",
-    "/absolute/path/to/project"
-  ]
+  "allowedRoots": [
+    {
+      "path": "/absolute/path/to/nanoclaw/data",
+      "allowReadWrite": true,
+      "description": "Marketing signals database"
+    },
+    {
+      "path": "/absolute/path/to/nanoclaw",
+      "allowReadWrite": false,
+      "description": "NanoClaw project config (read-only)"
+    }
+  ],
+  "blockedPatterns": [],
+  "nonMainReadOnly": false
 }
 ```
+
+> **注意**：`nonMainReadOnly` 必须设为 `false`，否则 data 目录会被强制只读，SQLite 无法创建锁文件。
 
 ### Step 11 — 配置 cron 定时采集
 
