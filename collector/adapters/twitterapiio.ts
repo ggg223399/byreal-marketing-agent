@@ -69,7 +69,6 @@ function mapTweet(tweet: ApiTweet): RawTweet {
 
 async function searchTweets(query: string, apiKey: string, count: number): Promise<ApiTweet[]> {
   const params = new URLSearchParams({ query, queryType: 'Latest', count: String(count) });
-  const params = new URLSearchParams({ query, queryType: 'Latest' });
   const url = `${BASE_URL}/twitter/tweet/advanced_search?${params}`;
   const options: RequestInit = {
     headers: { 'X-API-Key': apiKey },
@@ -106,7 +105,7 @@ export class TwitterApiIoAdapter implements DataSourceAdapter {
 
     if (accounts.length > 0) {
       const accountQuery = accounts.map(a => `from:${a}`).join(' OR ');
-      const tweets = await searchTweets(accountQuery, apiKey, config.dataSource.maxTweetsPerQuery ?? 20);
+      const tweets = await searchTweets(accountQuery, apiKey, config.dataSource.maxTweetsPerQuery ?? 5);
       allTweets.push(...tweets);
     }
 
@@ -117,7 +116,7 @@ export class TwitterApiIoAdapter implements DataSourceAdapter {
 
     if (config.monitoring.keywords.length > 0) {
       const keywordQuery = config.monitoring.keywords.join(' OR ');
-      const tweets = await searchTweets(keywordQuery, apiKey, config.dataSource.maxTweetsPerQuery ?? 20);
+      const tweets = await searchTweets(keywordQuery, apiKey, config.dataSource.maxTweetsPerQuery ?? 5);
       allTweets.push(...tweets);
     }
 

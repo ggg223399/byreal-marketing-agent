@@ -32,7 +32,7 @@ function normalizeConfig(raw: Record<string, unknown>): CollectorConfig {
     dataSource: {
       type: (ds.type as string) || 'mock',
       apiKey: (ds.api_key as string) ?? (ds.apiKey as string) ?? '',
-      maxTweetsPerQuery: (ds.max_tweets_per_query ?? ds.maxTweetsPerQuery ?? 20) as number,
+      maxTweetsPerQuery: (ds.max_tweets_per_query ?? ds.maxTweetsPerQuery ?? 5) as number,
     },
     monitoring: {
       accountsTier1: (mon.accounts_tier1 ?? mon.accountsTier1 ?? []) as string[],

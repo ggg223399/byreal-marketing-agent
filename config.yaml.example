@@ -7,7 +7,7 @@ data_source:
   #   twitter_v2   — 官方 Twitter API v2，Bearer Token，需要 Basic($100/月) 或以上套餐
   type: twitterapi_io
   api_key: ""  # 通过 DATA_SOURCE_API_KEY 环境变量覆盖
-  max_tweets_per_query: 20  # 每次查询最多返回 N 条（1-100），减少 API 用量
+  max_tweets_per_query: 5  # 每次查询最多返回 N 条（1-100），减少 API 用量
 
 monitoring:
   accounts_tier1:
