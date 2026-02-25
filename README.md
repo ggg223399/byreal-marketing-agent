@@ -47,6 +47,7 @@ Twitter 营销情报采集 + AI 分类 + Discord 团队审核，封装为 NanoCl
 在你的 NanoClaw 目录下：
 
 ```bash
+cd /path/to/your/nanoclaw
 git clone https://github.com/ggg223399/byreal-marketing-agent skills/byreal-marketing-agent
 claude
 ```
