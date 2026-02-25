@@ -67,7 +67,7 @@ claude
 
 Claude Code 会自动完成：依赖安装、代码集成、数据库初始化、cron 定时任务配置。
 
-> **前置条件**：需要已部署运行的 [NanoClaw](https://github.com/qwibitai/NanoClaw) 实例、[TwitterAPI.io](https://twitterapi.io) API Key、Discord Server 及 Webhook。详见 [SKILL.md](./SKILL.md)。
+> **前置条件**：需要已部署运行的 [NanoClaw](https://github.com/qwibitai/NanoClaw) 实例。Discord Bot Token、Webhook URL、TwitterAPI.io API Key 的获取方法见 [SKILL.md 前置准备](./SKILL.md#准备-1获取-discord-bot-token)。
 
 ## Discord 命令
 
