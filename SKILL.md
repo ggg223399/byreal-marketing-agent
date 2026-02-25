@@ -56,14 +56,14 @@ npm install --save-dev @types/better-sqlite3
 
 ### Step 3 — 修改 `src/config.ts`
 
-在 `readEnvFile([...])` 的数组末尾加入两个新字段：
+在 `readEnvFile([...])` 的数组末尾加入新字段：
 
 ```typescript
 const envConfig = readEnvFile([
   'ASSISTANT_NAME',
   'ASSISTANT_HAS_OWN_NUMBER',
   'DISCORD_BOT_TOKEN',   // ADD THIS
-  'DISCORD_ONLY',         // ADD THIS
+  // 'DISCORD_ONLY',    // 可选：仅在无 WhatsApp/Telegram 时需要
 ]);
 ```
 
@@ -73,43 +73,53 @@ const envConfig = readEnvFile([
 // Discord configuration
 export const DISCORD_BOT_TOKEN =
   process.env.DISCORD_BOT_TOKEN || envConfig.DISCORD_BOT_TOKEN || '';
-export const DISCORD_ONLY =
-  (process.env.DISCORD_ONLY || envConfig.DISCORD_ONLY) === 'true';
 ```
+
+> **注意**：如果你的 NanoClaw 已有 Telegram（`TELEGRAM_ONLY`），不需要加 `DISCORD_ONLY`。Discord 可以和 Telegram/WhatsApp 同时运行。
 
 ### Step 4 — 修改 `src/index.ts`
 
 在 imports 区加入：
 
 ```typescript
-import { DISCORD_BOT_TOKEN, DISCORD_ONLY } from './config.js';
+import { DISCORD_BOT_TOKEN } from './config.js';
 import { DiscordChannel } from './channels/discord.js';
 ```
 
-找到 main() 函数中创建 channels 的代码块（原代码）：
+找到 `// Create and connect channels` 注释块，在**现有所有 channel 初始化代码之前**插入 Discord 块，不要修改或删除现有代码：
 
 ```typescript
 // Create and connect channels
-whatsapp = new WhatsAppChannel(channelOpts);
-channels.push(whatsapp);
-await whatsapp.connect();
-```
-
-替换为：
-
-```typescript
-// Create and connect channels
-if (DISCORD_BOT_TOKEN) {
+if (DISCORD_BOT_TOKEN) {          // ADD THIS BLOCK
   const discord = new DiscordChannel(DISCORD_BOT_TOKEN, channelOpts);
   channels.push(discord);
   await discord.connect();
 }
-if (!DISCORD_ONLY) {
+// ... 保留下方所有现有代码不变（WhatsApp、Telegram 等）
+```
+
+**示例**：如果你同时有 Telegram + WhatsApp，修改后应该是：
+
+```typescript
+// Create and connect channels
+if (DISCORD_BOT_TOKEN) {          // ← NEW
+  const discord = new DiscordChannel(DISCORD_BOT_TOKEN, channelOpts);
+  channels.push(discord);
+  await discord.connect();
+}
+if (!TELEGRAM_ONLY) {             // ← 原有，不改
   whatsapp = new WhatsAppChannel(channelOpts);
   channels.push(whatsapp);
   await whatsapp.connect();
 }
+if (TELEGRAM_BOT_TOKEN) {         // ← 原有，不改
+  const telegram = new TelegramChannel(TELEGRAM_BOT_TOKEN, channelOpts);
+  channels.push(telegram);
+  await telegram.connect();
+}
 ```
+
+> **兼容性**：Discord、Telegram、WhatsApp 三者可以同时运行，互不干扰。每个 channel 独立处理各自的消息队列。
 
 ### Step 5 — 修改 `vitest.config.ts`
 
