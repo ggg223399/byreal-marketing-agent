@@ -78,6 +78,7 @@ async function main() {
   let stored = 0;
   let skipped = 0;
   const redSignals: InsertSignalInput[] = [];
+  const newSignals: InsertSignalInput[] = [];
   const byTweetId = new Map(results.map((result) => [result.tweetId, result]));
 
   for (const tweet of tweets) {
@@ -101,6 +102,7 @@ async function main() {
     try {
       insertSignal(input);
       stored++;
+      newSignals.push(input);
       if (input.alertLevel === 'red') {
         redSignals.push(input);
       }
@@ -114,9 +116,30 @@ async function main() {
     }
   }
 
-  if (redSignals.length > 0 && config.notifications.discordWebhookUrl) {
+  // Post each new signal to all-signals channel
+  if (newSignals.length > 0 && config.notifications.discordWebhookUrl) {
+    const alertEmoji: Record<string, string> = { red: '🔴', orange: '🟠', yellow: '🟡', none: '⚪' };
+    for (const s of newSignals) {
+      try {
+        const emoji = alertEmoji[s.alertLevel] || '⚪';
+        const conf = `${(s.confidence * 100).toFixed(0)}%`;
+        const preview = s.content.replace(/\s+/g, ' ').trim().slice(0, 200);
+        await fetch(config.notifications.discordWebhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            content: `${emoji} **${s.author}** · \`${s.signalClass}\` · ${conf}\n> ${preview}\n${s.url ?? ''}`,
+          }),
+        });
+      } catch (err: unknown) {
+        logJson('error', { message: err instanceof Error ? err.message : String(err) });
+      }
+    }
+  }
+
+  if (redSignals.length > 0 && config.notifications.urgentWebhookUrl) {
     try {
-      await notifyRedSignals(redSignals, config.notifications.discordWebhookUrl);
+      await notifyRedSignals(redSignals, config.notifications.urgentWebhookUrl);
     } catch (err: unknown) {
       logJson('error', {
         message: err instanceof Error ? err.message : String(err),

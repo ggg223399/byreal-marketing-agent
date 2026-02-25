@@ -51,6 +51,8 @@ function normalizeConfig(raw: Record<string, unknown>): CollectorConfig {
       digestTime: (notif.digest_time ?? notif.digestTime ?? '09:00') as string,
       digestTimezone: (notif.digest_timezone ?? notif.digestTimezone ?? 'Asia/Shanghai') as string,
       discordWebhookUrl: (notif.discord_webhook_url ?? notif.discordWebhookUrl ?? '') as string,
+      urgentWebhookUrl: (notif.urgent_webhook_url ?? notif.urgentWebhookUrl ?? '') as string,
+      digestWebhookUrl: (notif.digest_webhook_url ?? notif.digestWebhookUrl ?? '') as string,
     },
     governance: {
       maxRepliesPerHour: (gov.max_replies_per_hour ?? gov.maxRepliesPerHour ?? 5) as number,

@@ -80,6 +80,8 @@ export interface CollectorConfig {
     digestTime?: string;
     digestTimezone?: string;
     discordWebhookUrl?: string;
+    urgentWebhookUrl?: string;
+    digestWebhookUrl?: string;
   };
   governance: {
     maxRepliesPerHour: number;
