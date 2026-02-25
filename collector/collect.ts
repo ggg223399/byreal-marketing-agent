@@ -3,6 +3,7 @@ import { classifyTweets } from '../classifier/classify.js';
 import { DataSourceAdapter } from '../types/index.js';
 import { MockAdapter } from './adapters/mock.js';
 import { TwitterApiIoAdapter } from './adapters/twitterapiio.js';
+import { TwitterV2Adapter } from './adapters/twitter-v2.js';
 import { XpozAdapter } from './adapters/xpoz.js';
 import { loadConfig } from '../config/loader.js';
 
@@ -12,6 +13,7 @@ function createAdapter(type: string): DataSourceAdapter {
   switch (type) {
     case 'mock': return new MockAdapter();
     case 'twitterapi_io': return new TwitterApiIoAdapter();
+    case 'twitter_v2': return new TwitterV2Adapter();
     case 'xpoz': return new XpozAdapter();
     default: throw new Error(`Unknown adapter type: ${type}`);
   }

@@ -247,6 +247,24 @@ systemctl --user restart nanoclaw
 
 ## 自定义
 
+### 切换数据源
+
+编辑 `config.yaml` 的 `data_source.type`：
+
+| 值 | 认证方式 | 适用场景 |
+|----|---------|---------|
+| `mock` | 无 | 本地开发测试 |
+| `twitterapi_io` | `X-API-Key` | 初期上线，按量付费 |
+| `twitter_v2` | Bearer Token | 官方 API，高配额需求 |
+
+切换到 `twitter_v2`：
+1. 在 [Twitter Developer Portal](https://developer.twitter.com/) 申请 Basic 或以上套餐
+2. 创建 App，获取 Bearer Token
+3. 在 `.env` 设置 `DATA_SOURCE_API_KEY=<your-bearer-token>`
+4. 在 `config.yaml` 设置 `data_source.type: twitter_v2`
+
+> **注意**：twitter_v2 的 `api_key` 字段存放的是 Bearer Token（不是 API Key），两者认证方式不同。
+
 - **修改分类规则**：编辑 `prompts/classification.md`
 - **调整监控账号/关键词**：编辑 `config.yaml`
 - **调整采集频率**：同时修改 cron 表达式和 `config.yaml` 的 `polling_interval_minutes`

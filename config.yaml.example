@@ -1,8 +1,12 @@
 # Copy to config.yaml and fill in your webhook URLs
 
 data_source:
-  type: twitterapi_io  # Options: mock, twitterapi_io, xpoz
-  api_key: ""  # Set via DATA_SOURCE_API_KEY env var or here
+  # 可选数据源：
+  #   mock         — 本地测试用假数据，无需 API Key
+  #   twitterapi_io — 按量计费 $0.15/1K tweets，适合初期（https://twitterapi.io）
+  #   twitter_v2   — 官方 Twitter API v2，Bearer Token，需要 Basic($100/月) 或以上套餐
+  type: twitterapi_io
+  api_key: ""  # 通过 DATA_SOURCE_API_KEY 环境变量覆盖
 
 monitoring:
   accounts_tier1:
