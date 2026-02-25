@@ -61,6 +61,7 @@ export interface CollectorConfig {
   dataSource: {
     type: string;
     apiKey?: string;
+    maxTweetsPerQuery?: number;
   };
   monitoring: {
     accountsTier1: string[];
