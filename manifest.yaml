@@ -37,6 +37,7 @@ modifies:
   - src/channels/discord.ts
   - tsconfig.json
   - vitest.config.ts
+  - package.json
 structured:
   npm_dependencies:
     "@anthropic-ai/sdk": "^0.39.0"
