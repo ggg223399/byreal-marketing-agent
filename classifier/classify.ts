@@ -3,12 +3,25 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 import { callClaudeText } from "../lib/claude-client.js";
-import type { AlertLevel, CollectorConfig, RawTweet, SignalClass } from "../types/index.js";
+import { CATEGORY_BY_NAME, SIGNAL_CATEGORIES } from "../types/index.js";
+import type {
+  AlertLevel,
+  CollectorConfig,
+  RawTweet,
+  RiskLevel,
+  Sentiment,
+  SignalCategory,
+  SuggestedAction,
+} from "../types/index.js";
 
 export interface ClassificationResult {
   tweetId: string;
-  signalClass: SignalClass;
+  category: SignalCategory;
   confidence: number;
+  sentiment: Sentiment;
+  priority: number;
+  riskLevel: RiskLevel;
+  suggestedAction: SuggestedAction;
   alertLevel: AlertLevel;
   reason: string;
 }
@@ -29,14 +42,45 @@ function clampConfidence(value: number): number {
   if (value < 0) {
     return 0;
   }
-  if (value > 1) {
-    return 1;
+  if (value > 100) {
+    return 100;
   }
-  return value;
+  return Math.round(value);
 }
 
-function isSignalClass(value: unknown): value is SignalClass {
-  return value === "reply_needed" || value === "watch_only" || value === "ignore";
+function isValidCategory(value: unknown): value is SignalCategory {
+  if (typeof value !== 'number' || !Number.isInteger(value)) {
+    return false;
+  }
+
+  return value >= 1 && value <= 8 && value in SIGNAL_CATEGORIES;
+}
+
+function isSentiment(value: unknown): value is Sentiment {
+  return ['positive', 'neutral', 'negative'].includes(value as string);
+}
+
+function isRiskLevel(value: unknown): value is RiskLevel {
+  return ['low', 'medium', 'high'].includes(value as string);
+}
+
+function isSuggestedAction(value: unknown): value is SuggestedAction {
+  return ['qrt_positioning', 'reply_supportive', 'like_only', 'monitor', 'escalate_internal'].includes(value as string);
+}
+
+function normalizePriority(value: unknown): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 3;
+  }
+  const rounded = Math.round(numeric);
+  if (rounded < 1) {
+    return 1;
+  }
+  if (rounded > 5) {
+    return 5;
+  }
+  return rounded;
 }
 
 function extractJsonArray(raw: string): string {
@@ -59,27 +103,46 @@ function parseAndValidate(raw: string): Array<Omit<ClassificationResult, "alertL
     throw new Error("LLM response is not an array");
   }
 
+  const allowedCategoryNames = Object.keys(CATEGORY_BY_NAME).join(", ");
+
   return parsed.map((item, index) => {
     const record = item as Record<string, unknown>;
     const tweetId = record.tweetId;
-    const signalClass = record.signalClass;
+    const category = Number(record.category);
     const confidence = Number(record.confidence);
+    const sentiment = record.sentiment;
+    const priority = record.priority;
+    const riskLevel = record.riskLevel;
+    const suggestedAction = record.suggestedAction;
     const reason = record.reason;
 
     if (typeof tweetId !== "string" || !tweetId) {
       throw new Error(`Invalid tweetId at index ${index}`);
     }
-    if (!isSignalClass(signalClass)) {
-      throw new Error(`Invalid signalClass at index ${index}`);
+    if (!isValidCategory(category)) {
+      throw new Error(`Invalid category at index ${index}. Expected integer 1-8 (${allowedCategoryNames})`);
     }
     if (typeof reason !== "string" || !reason.trim()) {
       throw new Error(`Invalid reason at index ${index}`);
     }
+    if (!isSentiment(sentiment)) {
+      throw new Error(`Invalid sentiment at index ${index}`);
+    }
+    if (!isRiskLevel(riskLevel)) {
+      throw new Error(`Invalid riskLevel at index ${index}`);
+    }
+    if (!isSuggestedAction(suggestedAction)) {
+      throw new Error(`Invalid suggestedAction at index ${index}`);
+    }
 
     return {
       tweetId,
-      signalClass,
+      category,
       confidence: clampConfidence(confidence),
+      sentiment,
+      priority: normalizePriority(priority),
+      riskLevel,
+      suggestedAction,
       reason: reason.trim(),
     };
   });
@@ -100,16 +163,36 @@ async function callAnthropic(systemPrompt: string, userPrompt: string, model: st
   });
 }
 
-export function deriveAlertLevel(signalClass: SignalClass, confidence: number): AlertLevel {
+export function deriveAlertLevel(category: SignalCategory, confidence: number): AlertLevel {
   const normalized = clampConfidence(confidence);
 
-  if (signalClass === "reply_needed") {
-    return normalized > 0.8 ? "red" : normalized >= 0.5 ? "orange" : "none";
+  if (category === 8) {
+    return 'red';
   }
-  if (signalClass === "watch_only") {
-    return "yellow";
+
+  if (category === 1) {
+    return normalized > 80 ? 'red' : 'yellow';
   }
-  return "none";
+
+  if (category === 6) {
+    if (normalized > 80) {
+      return 'red';
+    }
+    if (normalized >= 50) {
+      return 'orange';
+    }
+    return 'none';
+  }
+
+  if (category === 2 || category === 5) {
+    return normalized >= 50 ? 'orange' : 'none';
+  }
+
+  if (category === 3 || category === 4 || category === 7) {
+    return 'yellow';
+  }
+
+  return 'none';
 }
 
 export async function classifyTweets(
@@ -131,7 +214,7 @@ export async function classifyTweets(
     })
     .join("\n");
 
-  const basePrompt = `Classify these ${tweets.length} tweets. Return JSON array with fields: tweetId, signalClass, confidence (0-1), reason.\n${tweetLines}`;
+  const basePrompt = `Classify these ${tweets.length} tweets. Return JSON array with fields: tweetId, category (1-8), confidence (0-100), sentiment, priority (1-5), riskLevel, suggestedAction, reason.\n${tweetLines}`;
   const retryPrompt = `${basePrompt}\nOnly output valid JSON. Do not include markdown fences or additional text.`;
 
   let parsed: Array<Omit<ClassificationResult, "alertLevel">>;
@@ -153,7 +236,7 @@ export async function classifyTweets(
     if (!match) {
       throw new Error(`Missing classification for tweet ${tweet.id}`);
     }
-    const alertLevel = deriveAlertLevel(match.signalClass, match.confidence);
+    const alertLevel = deriveAlertLevel(match.category, match.confidence);
     return { ...match, alertLevel };
   });
 }
