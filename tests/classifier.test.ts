@@ -20,36 +20,65 @@ afterEach(() => {
 });
 
 describe('deriveAlertLevel', () => {
-  it('maps high confidence reply_needed to red', () => {
-    expect(deriveAlertLevel('reply_needed', 0.9)).toBe('red');
+  it('maps risk_event to red at any confidence', () => {
+    expect(deriveAlertLevel(8, 10)).toBe('red');
+    expect(deriveAlertLevel(8, 90)).toBe('red');
   });
 
-  it('maps medium confidence reply_needed to orange', () => {
-    expect(deriveAlertLevel('reply_needed', 0.6)).toBe('orange');
+  it('maps high confidence solana_growth_milestone to red', () => {
+    expect(deriveAlertLevel(1, 90)).toBe('red');
   });
 
-  it('maps low confidence reply_needed to none', () => {
-    expect(deriveAlertLevel('reply_needed', 0.2)).toBe('none');
+  it('maps lower confidence solana_growth_milestone to yellow', () => {
+    expect(deriveAlertLevel(1, 50)).toBe('yellow');
   });
 
-  it('maps watch_only to yellow', () => {
-    expect(deriveAlertLevel('watch_only', 0.1)).toBe('yellow');
+  it('maps high confidence byreal_ranking_mention to red', () => {
+    expect(deriveAlertLevel(6, 90)).toBe('red');
   });
 
-  it('maps ignore to none', () => {
-    expect(deriveAlertLevel('ignore', 0.9)).toBe('none');
+  it('maps medium confidence byreal_ranking_mention to orange', () => {
+    expect(deriveAlertLevel(6, 60)).toBe('orange');
   });
 
-  it('clamps >1 confidence before mapping', () => {
-    expect(deriveAlertLevel('reply_needed', 9)).toBe('red');
+  it('maps low confidence byreal_ranking_mention to none', () => {
+    expect(deriveAlertLevel(6, 30)).toBe('none');
+  });
+
+  it('maps institutional_adoption with sufficient confidence to orange', () => {
+    expect(deriveAlertLevel(2, 70)).toBe('orange');
+  });
+
+  it('maps institutional_adoption with low confidence to none', () => {
+    expect(deriveAlertLevel(2, 30)).toBe('none');
+  });
+
+  it('maps market_structure_insight with sufficient confidence to orange', () => {
+    expect(deriveAlertLevel(5, 60)).toBe('orange');
+  });
+
+  it('maps rwa_signal to yellow regardless of confidence', () => {
+    expect(deriveAlertLevel(3, 10)).toBe('yellow');
+  });
+
+  it('maps liquidity_signal to yellow regardless of confidence', () => {
+    expect(deriveAlertLevel(4, 90)).toBe('yellow');
+  });
+
+  it('maps partner_momentum to yellow regardless of confidence', () => {
+    expect(deriveAlertLevel(7, 20)).toBe('yellow');
+  });
+
+  it('clamps >100 confidence before mapping', () => {
+    expect(deriveAlertLevel(6, 900)).toBe('red');
   });
 
   it('treats NaN as zero confidence', () => {
-    expect(deriveAlertLevel('reply_needed', Number.NaN)).toBe('none');
+    expect(deriveAlertLevel(2, Number.NaN)).toBe('none');
   });
 
   it('treats Infinity as zero confidence', () => {
-    expect(deriveAlertLevel('reply_needed', Number.POSITIVE_INFINITY)).toBe('none');
+    expect(deriveAlertLevel(5, Number.POSITIVE_INFINITY)).toBe('none');
   });
 });
 
@@ -61,8 +90,26 @@ describe('classifyTweets', () => {
 
   it('parses mocked response and preserves tweet order', async () => {
     process.env.MOCK_CLASSIFICATION_RESPONSE = JSON.stringify([
-      { tweetId: 't2', signalClass: 'watch_only', confidence: 0.7, reason: 'r2' },
-      { tweetId: 't1', signalClass: 'reply_needed', confidence: 0.85, reason: 'r1' },
+      {
+        tweetId: 't2',
+        category: 3,
+        confidence: 70,
+        sentiment: 'neutral',
+        priority: 3,
+        riskLevel: 'low',
+        suggestedAction: 'monitor',
+        reason: 'r2',
+      },
+      {
+        tweetId: 't1',
+        category: 1,
+        confidence: 85,
+        sentiment: 'positive',
+        priority: 5,
+        riskLevel: 'medium',
+        suggestedAction: 'reply_supportive',
+        reason: 'r1',
+      },
     ]);
 
     const result = await classifyTweets(tweets, baseConfig);
@@ -73,46 +120,127 @@ describe('classifyTweets', () => {
 
   it('extracts JSON when wrapped in prose', async () => {
     process.env.MOCK_CLASSIFICATION_RESPONSE = `noise\n${JSON.stringify([
-      { tweetId: 't1', signalClass: 'ignore', confidence: 0.2, reason: 'x' },
-      { tweetId: 't2', signalClass: 'watch_only', confidence: 0.5, reason: 'y' },
+      {
+        tweetId: 't1',
+        category: 4,
+        confidence: 20,
+        sentiment: 'neutral',
+        priority: 2,
+        riskLevel: 'low',
+        suggestedAction: 'like_only',
+        reason: 'x',
+      },
+      {
+        tweetId: 't2',
+        category: 3,
+        confidence: 50,
+        sentiment: 'positive',
+        priority: 4,
+        riskLevel: 'medium',
+        suggestedAction: 'qrt_positioning',
+        reason: 'y',
+      },
     ])}\nmore noise`;
 
     const result = await classifyTweets(tweets, baseConfig);
-    expect(result[0].signalClass).toBe('ignore');
-    expect(result[1].signalClass).toBe('watch_only');
+    expect(result[0].category).toBe(4);
+    expect(result[1].category).toBe(3);
   });
 
   it('throws on missing classification for tweet', async () => {
     process.env.MOCK_CLASSIFICATION_RESPONSE = JSON.stringify([
-      { tweetId: 't1', signalClass: 'ignore', confidence: 0.2, reason: 'x' },
+      {
+        tweetId: 't1',
+        category: 4,
+        confidence: 20,
+        sentiment: 'neutral',
+        priority: 2,
+        riskLevel: 'low',
+        suggestedAction: 'monitor',
+        reason: 'x',
+      },
     ]);
 
     await expect(classifyTweets(tweets, baseConfig)).rejects.toThrow('Missing classification for tweet t2');
   });
 
-  it('throws on invalid signal class', async () => {
+  it('throws on invalid category', async () => {
     process.env.MOCK_CLASSIFICATION_RESPONSE = JSON.stringify([
-      { tweetId: 't1', signalClass: 'bad', confidence: 0.2, reason: 'x' },
-      { tweetId: 't2', signalClass: 'ignore', confidence: 0.2, reason: 'x' },
+      {
+        tweetId: 't1',
+        category: 99,
+        confidence: 20,
+        sentiment: 'neutral',
+        priority: 2,
+        riskLevel: 'low',
+        suggestedAction: 'monitor',
+        reason: 'x',
+      },
+      {
+        tweetId: 't2',
+        category: 4,
+        confidence: 20,
+        sentiment: 'neutral',
+        priority: 2,
+        riskLevel: 'low',
+        suggestedAction: 'monitor',
+        reason: 'x',
+      },
     ]);
-    await expect(classifyTweets(tweets, baseConfig)).rejects.toThrow('Invalid signalClass');
+    await expect(classifyTweets(tweets, baseConfig)).rejects.toThrow('Invalid category at index 0');
   });
 
   it('throws on invalid reason', async () => {
     process.env.MOCK_CLASSIFICATION_RESPONSE = JSON.stringify([
-      { tweetId: 't1', signalClass: 'ignore', confidence: 0.2, reason: '' },
-      { tweetId: 't2', signalClass: 'ignore', confidence: 0.2, reason: 'x' },
+      {
+        tweetId: 't1',
+        category: 4,
+        confidence: 20,
+        sentiment: 'neutral',
+        priority: 2,
+        riskLevel: 'low',
+        suggestedAction: 'monitor',
+        reason: '',
+      },
+      {
+        tweetId: 't2',
+        category: 8,
+        confidence: 20,
+        sentiment: 'negative',
+        priority: 5,
+        riskLevel: 'high',
+        suggestedAction: 'escalate_internal',
+        reason: 'x',
+      },
     ]);
     await expect(classifyTweets(tweets, baseConfig)).rejects.toThrow('Invalid reason');
   });
 
   it('clamps confidence values from parser', async () => {
     process.env.MOCK_CLASSIFICATION_RESPONSE = JSON.stringify([
-      { tweetId: 't1', signalClass: 'reply_needed', confidence: 10, reason: 'x' },
-      { tweetId: 't2', signalClass: 'reply_needed', confidence: -1, reason: 'x' },
+      {
+        tweetId: 't1',
+        category: 1,
+        confidence: 150,
+        sentiment: 'positive',
+        priority: 5,
+        riskLevel: 'medium',
+        suggestedAction: 'reply_supportive',
+        reason: 'x',
+      },
+      {
+        tweetId: 't2',
+        category: 1,
+        confidence: -10,
+        sentiment: 'neutral',
+        priority: 1,
+        riskLevel: 'low',
+        suggestedAction: 'monitor',
+        reason: 'x',
+      },
     ]);
     const result = await classifyTweets(tweets, baseConfig);
-    expect(result[0].confidence).toBe(1);
+    expect(result[0].confidence).toBe(100);
     expect(result[1].confidence).toBe(0);
   });
 });
