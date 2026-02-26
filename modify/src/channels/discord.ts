@@ -27,6 +27,7 @@ type DraftSignal = {
   sentiment?: 'positive' | 'negative' | 'neutral';
   riskLevel?: string;
   alertLevel?: string;
+  suggestedAction?: string;
   created_at?: string;
 };
 type SignalCategories = Record<number, string>;
@@ -76,6 +77,15 @@ function getPriorityFromConfidence(confidence: number): string {
   return 'P3';
 }
 
+function actionLabel(action?: string): string {
+  if (action === 'qrt_positioning') return '📢 Quote Tweet';
+  if (action === 'reply_supportive') return '💬 Reply · Supportive';
+  if (action === 'like_only') return '👍 Like Only';
+  if (action === 'monitor') return '👀 Monitor';
+  if (action === 'escalate_internal') return '🚨 Escalate · Internal';
+  return '—';
+}
+
 function buildSignalEmbed(signal: DraftSignal, categories: SignalCategories, _style: SignalEmbedStyle = 'unified'): EmbedBuilder {
   const category = categories[signal.category] ?? `unknown_${signal.category}`;
   const rawCategory = category.includes(' ') ? category.split(' ').slice(1).join(' ') : category;
@@ -108,6 +118,7 @@ function buildSignalEmbed(signal: DraftSignal, categories: SignalCategories, _st
     .addFields(
       { name: 'Priority · Confidence', value: `${priority} · ${score}`, inline: true },
       { name: 'Risk · Sentiment', value: `${risk} · ${sentimentLabel}`, inline: true },
+      { name: 'Action', value: actionLabel(signal.suggestedAction), inline: true },
     )
     .setFooter({ text: `Signal #${signal.id}` })
     .setTimestamp(createdAt);
