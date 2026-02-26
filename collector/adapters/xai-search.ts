@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { DataSourceAdapter, RawTweet, CollectorConfig } from '../../types/index.js';
 
 const RESPONSES_API_URL = 'https://api.x.ai/v1/responses';
-const MODEL = 'grok-3-fast';
+const MODEL = 'grok-4-1-fast-non-reasoning';
 const RETRY_DELAY_MS = 2000;
 const FETCH_TIMEOUT_MS = 30000;
 const INTER_CALL_DELAY_MS = 2000;
