@@ -12,15 +12,43 @@ data_source:
 monitoring:
   accounts_tier1:
     - "@solana"
-    - "@aave"
-    - "@realJames333"
+    - "@aaboronin"
+    - "@DefiLlama"
   accounts_partners:
-    - "@elonmusk"
+    - "@xStocksAI"
   keywords:
-    - "DeFi"
-    - "liquidity"
-    - "yield"
-    - "rwa"
+    # Ranking / Comparison
+    - "Byreal vs"
+    - "Top DEX Solana"
+    - "Solana leaderboard"
+    - "DEX comparison"
+    - "Top RWA Solana"
+    - "Solana ranking"
+    - "Top liquidity Solana"
+    # Growth / Capital
+    - "TVL"
+    - "volume spike"
+    - "ATH"
+    - "breakout"
+    - "inflow"
+    - "capital rotation"
+    - "liquidity forming"
+    - "structural shift"
+    # Institutional
+    - "custody"
+    - "tokenized equities"
+    - "RWA issuance"
+    - "TradFi integration"
+    - "ETF"
+    - "Internet Capital Markets"
+    # Risk
+    - "exploit"
+    - "hack"
+    - "drained"
+    - "insolvency"
+    - "rug"
+    - "depeg"
+    - "regulatory ban"
   polling_interval_minutes: 10
 
 classification:
@@ -28,14 +56,47 @@ classification:
   temperature: 0
 
 notifications:
-  urgent_channel: "urgent-signals"
-  digest_channel: "daily-digest"
-  all_channel: "all-signals"
-  discord_webhook_url: "<your-all-signals-webhook>"
-  digest_webhook_url: "<your-daily-digest-webhook>"  # Discord webhook URL for #daily-digest channel
-  urgent_webhook_url: "<your-urgent-signals-webhook>"  # Discord webhook URL for #urgent-signals channel
+  # Discord 频道名称（Bot 自动匹配频道并发送带按钮的信号通知）
+  risk_channel: marketing-bot            # 风险事件（category 8）
+  opportunities_channel: marketing-bot   # 增长/排名/机构信号
+  ecosystem_channel: marketing-bot      # RWA/流动性/合作伙伴
+
+  # 新增频道路由配置
+  needs_reply_channel: needs-reply           # 需要回复的信号
+  needs_interaction_channel: needs-interaction # 需要互动的信号
+  tier1_channel: tier1-signals               # Tier 1 信号（高优先级）
+  tier2_channel: tier2-signals               # Tier 2 信号（中优先级）
+  tier3_channel: tier3-signals               # Tier 3 信号（低优先级）
+  noise_channel: noise                       # 噪音/低价值信号
+  summary_channel: periodic-summary          # 周期性摘要频道
+
+  # Webhook URL（仅用于 cron 脚本发送的非交互通知）
+  digest_webhook_url: "<your-daily-digest-webhook>"  # #daily-digest
+
   digest_time: "23:00"
   digest_timezone: "Asia/Shanghai"
+
+# 回复语气配置（可选，最多5个，每个id最多20字符）
+tones:
+  - id: helpful_expert
+    label: Helpful Expert
+    emoji: "🧑‍💼"
+    description: "专业权威，提供具体价值"
+  - id: friendly_peer
+    label: Friendly Peer
+    emoji: "👋"
+    description: "轻松对等，亲切友好"
+  - id: humble_ack
+    label: Humble Ack
+    emoji: "🙏"
+    description: "感恩致谢，不强推"
+  - id: direct_rebuttal
+    label: Direct Rebuttal
+    emoji: "💬"
+    description: "正面回应关切，建设性反驳"
+
+# 品牌上下文文件路径（用于生成回复时的品牌语境）
+brand_context_path: "prompts/brand_context.md"
 
 governance:
   max_replies_per_hour: 5
