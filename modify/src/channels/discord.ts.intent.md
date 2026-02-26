@@ -12,13 +12,42 @@ Replaced the generic NanoClaw DiscordChannel with a marketing-specific version t
 
 ## Key sections
 - Imports: discord.js, better-sqlite3, marketing-agent modules
-- CATEGORY_BUTTONS: per-category tone button definitions
-- buildToneButtonRow: dynamic button row builder
-- buildDraftEmbed: draft embed with original tweet content
+- SIGNAL_CATEGORIES: 8 category definitions with emojis
+- buildSignalEmbed: unified signal card layout
+  - Title: `@author - Category` with hyperlink (no emoji, no ID)
+  - Fields: Priority·Confidence and Risk·Sentiment (2 inline pairs)
+  - Footer: `Signal #ID` with timestamp
+  - Content: tweet text + View Tweet link + separator line
+- buildDraftReplyEmbed: draft embed with tone label and generated reply
+- buildToneActionRow: 5 buttons in one row (4 tones + Context button)
+- buildFeedbackSelectRow: signal feedback dropdown (Not Relevant, Wrong Category, etc.)
+- buildProcessedSignalEmbed: greyed-out embed after feedback submitted
 - DiscordChannel class: implements Channel interface with marketing features
 - Signal polling loop: checks DB for unnotified signals
 - Button interaction handler: tone selection -> draft generation
 - Summary scheduler: cron-like scheduling for periodic summaries
+- Emoji stripping: space-based split for cleaning author names
+
+## UI Changes (Latest)
+### Signal Embed Layout
+- **Title**: `@author - Category` with hyperlink (clean, no emoji, no ID)
+- **Fields**: 
+  - Priority · Confidence (inline)
+  - Risk · Sentiment (inline)
+- **Footer**: `Signal #ID` with timestamp
+- **Body**: Tweet content + [View Tweet] link + separator line
+- **Color**: Based on alert level (red/orange/yellow/none -> green border)
+
+### Button Layout
+- **Single row with 5 buttons** (4 tone buttons + Context button)
+- First tone button highlighted green (ButtonStyle.Success)
+- Context button uses ButtonStyle.Secondary
+
+### Draft Embed
+- Twitter blue color (0x1DA1F2)
+- Author info with hyperlink
+- Safe draft text (backticks escaped)
+- Footer: `Draft Reply · {toneLabel} · #{signalId}`
 
 ## Invariants
 - Still implements the Channel interface (name, connect, sendMessage, disconnect)
