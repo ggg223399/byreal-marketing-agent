@@ -10,9 +10,12 @@ export interface DiscordChannelOpts {
   draftChannel?: string;
 }
 
-type DraftTone = 'helpful_expert' | 'friendly_peer' | 'humble_ack' | 'direct_rebuttal';
+type ToneConfig = { id: string; label: string; emoji: string; description: string };
+
 type DraftSignal = { id: number; author: string; content: string; category: number; confidence: number };
 type SignalCategories = Record<number, string>;
+
+type ToneKey = string;
 
 const SIGNAL_CATEGORIES: SignalCategories = {
   1: '🚀 solana_growth_milestone',
@@ -25,60 +28,27 @@ const SIGNAL_CATEGORIES: SignalCategories = {
   8: '⚠️ risk_event',
 };
 
-const TONE_DISPLAY: Record<DraftTone, string> = {
-  helpful_expert: '🧑‍💼 Helpful Expert',
-  friendly_peer: '👋 Friendly Peer',
-  humble_ack: '🙏 Humble Ack',
-  direct_rebuttal: '💬 Direct Rebuttal',
-};
+const DEFAULT_TONES: ToneConfig[] = [
+  { id: 'helpful_expert', label: 'Helpful Expert', emoji: '🧑‍💼', description: '专业权威，提供具体价值' },
+  { id: 'friendly_peer', label: 'Friendly Peer', emoji: '👋', description: '轻松对等，亲切友好' },
+  { id: 'humble_ack', label: 'Humble Ack', emoji: '🙏', description: '感恩致谢，不强推' },
+  { id: 'direct_rebuttal', label: 'Direct Rebuttal', emoji: '💬', description: '正面回应关切，建设性反驳' },
+];
 
-const CATEGORY_BUTTONS: Record<number, Array<{ tone: DraftTone; label: string }>> = {
-  1: [
-    { tone: 'friendly_peer', label: '🎉 Celebrate' },
-    { tone: 'helpful_expert', label: '📊 Data Commentary' },
-    { tone: 'humble_ack', label: '🚀 Amplify' },
-  ],
-  2: [
-    { tone: 'helpful_expert', label: '🧑‍💼 Expert Analysis' },
-    { tone: 'friendly_peer', label: '📊 Market Impact' },
-    { tone: 'humble_ack', label: '🙏 Welcome Aboard' },
-    { tone: 'direct_rebuttal', label: '💬 Our Position' },
-  ],
-  3: [
-    { tone: 'helpful_expert', label: '🧑‍💼 Expert Insight' },
-    { tone: 'friendly_peer', label: '👋 Join Discussion' },
-    { tone: 'humble_ack', label: '📊 Share Context' },
-  ],
-  4: [
-    { tone: 'helpful_expert', label: '📊 Data Insight' },
-    { tone: 'friendly_peer', label: '👋 Discuss' },
-    { tone: 'humble_ack', label: '💧 Our Liquidity' },
-    { tone: 'direct_rebuttal', label: '💬 Clarify' },
-  ],
-  5: [
-    { tone: 'helpful_expert', label: '📊 Analysis' },
-    { tone: 'friendly_peer', label: '👋 Join Chat' },
-    { tone: 'direct_rebuttal', label: '🧠 Our View' },
-    { tone: 'humble_ack', label: '🙏 Great Take' },
-  ],
-  6: [
-    { tone: 'humble_ack', label: '🙏 Thank You' },
-    { tone: 'friendly_peer', label: '🎉 Celebrate' },
-    { tone: 'helpful_expert', label: '📊 More Data' },
-    { tone: 'direct_rebuttal', label: '💬 Add Context' },
-  ],
-  7: [
-    { tone: 'friendly_peer', label: '🤝 Collaborate' },
-    { tone: 'humble_ack', label: '🙏 Appreciate' },
-    { tone: 'helpful_expert', label: '📊 Synergy Data' },
-  ],
-  8: [
-    { tone: 'direct_rebuttal', label: '💬 Fact Check' },
-    { tone: 'helpful_expert', label: '🧑‍💼 Expert Response' },
-    { tone: 'humble_ack', label: '🙏 Acknowledge' },
-    { tone: 'friendly_peer', label: '👋 Reassure' },
-  ],
-};
+function formatToneLabel(tone: ToneConfig): string {
+  const emoji = (tone.emoji || '').trim();
+  const label = (tone.label || tone.id || 'Tone').trim();
+  return emoji ? emoji + ' ' + label : label;
+}
+
+function getConfiguredTones(config: any): ToneConfig[] {
+  const tones = config?.tones;
+  if (Array.isArray(tones) && tones.length > 0) {
+    return tones as ToneConfig[];
+  }
+  return DEFAULT_TONES;
+}
+
 function titleCaseCategory(raw: string): string {
   return raw
     .split('_')
@@ -86,21 +56,21 @@ function titleCaseCategory(raw: string): string {
     .join(' ');
 }
 
-function buildToneButtonRow(signalId: number, category?: number) {
-  const buttons = category && CATEGORY_BUTTONS[category]
-    ? CATEGORY_BUTTONS[category]
-    : [
-        { tone: 'helpful_expert' as DraftTone, label: TONE_DISPLAY.helpful_expert },
-        { tone: 'friendly_peer' as DraftTone, label: TONE_DISPLAY.friendly_peer },
-        { tone: 'humble_ack' as DraftTone, label: TONE_DISPLAY.humble_ack },
-        { tone: 'direct_rebuttal' as DraftTone, label: TONE_DISPLAY.direct_rebuttal },
-      ];
-
+function buildGenerateReplyRow(signalId: number) {
   return new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(
-    ...buttons.map((btn, i) =>
+    new ButtonBuilder()
+      .setCustomId('ma_generate:' + signalId)
+      .setLabel('✨ Generate Reply')
+      .setStyle(ButtonStyle.Success),
+  );
+}
+
+function buildToneButtonRow(tones: ToneConfig[], signalId: number) {
+  return new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(
+    ...tones.map((tone, i) =>
       new ButtonBuilder()
-        .setCustomId(`ma_tone:${btn.tone}:${signalId}`)
-        .setLabel(btn.label)
+        .setCustomId('ma_tone:' + i + ':' + signalId)
+        .setLabel(formatToneLabel(tone))
         .setStyle(i === 0 ? ButtonStyle.Success : ButtonStyle.Primary)
     ),
   );
@@ -114,17 +84,20 @@ function buildSignalSummaryEmbed(signal: DraftSignal, categories: SignalCategori
   return new EmbedBuilder()
     .setColor(0x5865f2)
     .setTitle(`📋 Signal #${signal.id} — ${categoryName}`)
-    .setDescription(`@${signal.author} · Confidence ${signal.confidence}%\n> ${content}\n\nSelect a tone to generate a draft reply.`)
+    .setDescription(`@${signal.author} · Confidence ${signal.confidence}%\n> ${content}\n\nClick Generate Reply to open an ephemeral draft.`)
     .setFooter({ text: `#${signal.id}` });
 }
 
-function buildDraftEmbed(signal: DraftSignal, tone: DraftTone, draftText: string): EmbedBuilder {
+function buildDraftEmbed(signal: DraftSignal, toneLabel: string, draftText: string): EmbedBuilder {
   const originalContent = signal.content.replace(/\s+/g, ' ').trim().slice(0, 200);
+  const safeToneLabel = toneLabel || 'Draft';
+  const description =
+    '**Original** (@' + signal.author + '):\n> ' + originalContent + '\n\n**Draft:**\n' + draftText + '\n\n💡 Copy and paste to Twitter';
   return new EmbedBuilder()
     .setColor(0x2ecc71)
-    .setTitle(`📝 Draft Reply — ${TONE_DISPLAY[tone]}`)
-    .setDescription(`**Original** (@${signal.author}):\n> ${originalContent}\n\n**Draft:**\n${draftText}\n\n💡 Copy and paste to Twitter`)
-    .setFooter({ text: `#${signal.id} · ${TONE_DISPLAY[tone]}` })
+    .setTitle('📝 Draft Reply — ' + safeToneLabel)
+    .setDescription(description)
+    .setFooter({ text: '#' + signal.id + ' · ' + safeToneLabel })
     .setTimestamp(new Date());
 }
 
@@ -153,7 +126,7 @@ export class DiscordChannel implements Channel {
         return true;
       }
 
-      const row = buildToneButtonRow(signal.id, signal.category);
+      const row = buildGenerateReplyRow(signal.id);
       await (message.channel as TextChannel).send({
         embeds: [buildSignalSummaryEmbed(signal, SIGNAL_CATEGORIES)],
         components: [row],
@@ -238,7 +211,7 @@ export class DiscordChannel implements Channel {
                   actionEmbed.setColor(0xE67E22);
                 }
                 if (actionChannelName === needsReplyName) {
-                  const row = buildToneButtonRow(signal.id, signal.category);
+                  const row = buildGenerateReplyRow(signal.id);
                   await actionChannel.send({ embeds: [actionEmbed], components: [row] });
                 } else {
                   await actionChannel.send({ embeds: [actionEmbed] });
@@ -507,88 +480,144 @@ export class DiscordChannel implements Channel {
     this.client.on(Events.InteractionCreate, async (interaction: any) => {
       if (!interaction.isButton()) return;
 
-      const customId = interaction.customId;
+      const customId = interaction.customId as string;
       if (!customId.startsWith('ma_')) return;
 
-      // Handle delete draft button
-      if (interaction.isButton() && interaction.customId === 'ma_delete_draft') {
-        try {
-          await interaction.message.delete();
-        } catch (err) {
-          logger.error({ err }, 'Failed to delete draft message');
-          await interaction.reply({ content: '⚠️ Could not delete message.', ephemeral: true });
+      const [action, a, b] = customId.split(':');
+
+      if (action === 'ma_generate') {
+        const signalId = Number(a);
+        if (!Number.isFinite(signalId)) {
+          await interaction.reply({ content: '⚠️ Invalid signal id.', ephemeral: true }).catch(() => undefined);
+          return;
         }
+
+        await interaction.reply({ content: '✨ Generating draft...', ephemeral: true }).catch(() => undefined);
+
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const [dbModule, genModule, configModule] = await Promise.all([
+            import('../../marketing-agent/db/index.js') as Promise<any>,
+            import('../../marketing-agent/generator/draft.js') as Promise<any>,
+            import('../../marketing-agent/config/loader.js') as Promise<any>,
+          ]);
+
+          const signal: DraftSignal | null = dbModule.getSignalById(signalId);
+          if (!signal) {
+            await interaction.editReply({ content: '⚠️ Signal not found', components: [] }).catch(() => undefined);
+            return;
+          }
+
+          const config = configModule.loadConfig();
+          const tones = getConfiguredTones(config);
+          const toneIndex = 0;
+          const tone = tones[toneIndex];
+          const toneLabel = formatToneLabel(tone);
+
+          const draftText: string = await genModule.generateSingleToneDraft(signal, tone.id);
+          const row = buildToneButtonRow(tones, signal.id);
+
+          await interaction.editReply({
+            content: '',
+            embeds: [buildDraftEmbed(signal, toneLabel, draftText)],
+            components: [row],
+          }).catch(() => undefined);
+        } catch (err) {
+          logger.error({ err, signalId }, 'Generate Reply handler failed');
+          await interaction.editReply({ content: '⚠️ Failed to generate draft. Check logs.', components: [] }).catch(() => undefined);
+        }
+
         return;
       }
 
-      const [action, tone, signalIdStr] = customId.split(':');
+      if (action === 'ma_tone') {
+        const toneKey: ToneKey | undefined = a;
+        const signalId = Number(b);
 
-      if (action === 'ma_tone' || action === 'ma_refresh') {
-        await interaction.deferUpdate();
+        if (!toneKey || !Number.isFinite(signalId)) {
+          await interaction.reply({ content: '⚠️ Invalid tone action.', ephemeral: true }).catch(() => undefined);
+          return;
+        }
+
+        // If this button lives on an ephemeral interaction message, update it in-place.
+        const canUpdateMessage = Boolean(interaction.message?.interaction);
+
+        if (!canUpdateMessage) {
+          await interaction.reply({ content: '✨ Generating draft...', ephemeral: true }).catch(() => undefined);
+        } else {
+          await interaction.deferUpdate().catch(() => undefined);
+          await interaction.message.edit({ content: '✨ Generating draft...', embeds: [], components: [] }).catch(() => undefined);
+        }
+
         try {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const [dbModule, genModule] = await Promise.all([
+          const [dbModule, genModule, configModule] = await Promise.all([
             import('../../marketing-agent/db/index.js') as Promise<any>,
             import('../../marketing-agent/generator/draft.js') as Promise<any>,
+            import('../../marketing-agent/config/loader.js') as Promise<any>,
           ]);
 
-          if (!tone || !signalIdStr) {
-            await interaction.editReply({ content: '⚠️ Invalid tone action.', components: [] });
+          const config = configModule.loadConfig();
+          const tones = getConfiguredTones(config);
+
+          let toneIndex = Number(toneKey);
+          if (!Number.isInteger(toneIndex)) {
+            toneIndex = tones.findIndex((t) => t.id === toneKey);
+          }
+
+          if (toneIndex < 0 || toneIndex >= tones.length) {
+            const msg = '⚠️ Unsupported tone.';
+            if (canUpdateMessage) {
+              await interaction.followUp({ content: msg, ephemeral: true }).catch(() => undefined);
+            } else {
+              await interaction.editReply({ content: msg, components: [] }).catch(() => undefined);
+            }
             return;
           }
 
-          const selectedTone = tone as DraftTone;
-          if (!(selectedTone in TONE_DISPLAY)) {
-            await interaction.editReply({ content: '⚠️ Unsupported tone.', components: [] });
-            return;
-          }
-
-          const signal: DraftSignal | null = dbModule.getSignalById(Number(signalIdStr));
+          const signal: DraftSignal | null = dbModule.getSignalById(signalId);
           if (!signal) {
-            await interaction.editReply({ content: '⚠️ Signal not found', components: [] });
+            const msg = '⚠️ Signal not found';
+            if (canUpdateMessage) {
+              await interaction.followUp({ content: msg, ephemeral: true }).catch(() => undefined);
+            } else {
+              await interaction.editReply({ content: msg, components: [] }).catch(() => undefined);
+            }
             return;
           }
 
-          const draftText: string = await genModule.generateSingleToneDraft(signal, selectedTone);
-          const row = buildToneButtonRow(signal.id, signal.category);
+          const tone = tones[toneIndex];
+          const toneLabel = formatToneLabel(tone);
+          const draftText: string = await genModule.generateSingleToneDraft(signal, tone.id);
+          const row = buildToneButtonRow(tones, signal.id);
 
-          // Find the draft channel
-          const draftChannelName = this.opts.draftChannel ?? 'draft';
-          const draftChannel = this.client!.channels.cache.find(
-            (ch: any) => ch.type === 0 && ch.name === draftChannelName
-          );
-          if (draftChannel && 'send' in draftChannel) {
-            // Add delete button alongside the tone buttons
-            const deleteBtn = new ButtonBuilder()
-              .setCustomId(`ma_delete_draft`)
-              .setLabel('🗑️ Delete')
-              .setStyle(ButtonStyle.Danger);
-            const actionRow = new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(
-              ...(buildToneButtonRow(signal.id, signal.category).components as any[]),
-              deleteBtn as any,
-            );
-            await (draftChannel as any).send({
-              embeds: [buildDraftEmbed(signal, selectedTone, draftText)],
-              components: [actionRow],
-            });
-            await interaction.editReply({ content: `✅ Draft sent to #${draftChannelName}`, components: [] });
-          } else {
-            // Fallback: reply in place if draft channel not found
-            await interaction.message.reply({
-              embeds: [buildDraftEmbed(signal, selectedTone, draftText)],
+          if (canUpdateMessage) {
+            await interaction.message.edit({
+              content: '',
+              embeds: [buildDraftEmbed(signal, toneLabel, draftText)],
               components: [row],
-            });
-            await interaction.editReply({ content: '✅ Draft generated above ⬆️', components: [] });
+            }).catch(() => undefined);
+          } else {
+            await interaction.editReply({
+              content: '',
+              embeds: [buildDraftEmbed(signal, toneLabel, draftText)],
+              components: [row],
+            }).catch(() => undefined);
           }
         } catch (err) {
-          logger.error({ err, signalIdStr, tone }, 'Draft tone button handler failed');
-          await interaction.editReply({
-            content: '⚠️ Failed to generate draft. Check logs.',
-            components: [],
-          }).catch(() => undefined);
+          logger.error({ err, signalId, toneKey }, 'Draft tone button handler failed');
+          const msg = '⚠️ Failed to generate draft. Check logs.';
+          if (canUpdateMessage) {
+            await interaction.followUp({ content: msg, ephemeral: true }).catch(() => undefined);
+          } else {
+            await interaction.editReply({ content: msg, components: [] }).catch(() => undefined);
+          }
         }
+
+        return;
       }
     });
+
 
     return new Promise<void>((resolve) => {
       this.client!.once(Events.ClientReady, (readyClient: any) => {
