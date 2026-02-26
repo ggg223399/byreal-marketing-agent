@@ -98,9 +98,9 @@ export function formatSignalForDiscord(signal: Signal): DiscordWebhookPayload {
         description: content,
         url: signal.url,
         fields: [
-          { name: 'Author', value: `[@${signal.author}](https://x.com/${signal.author})`, inline: true },
+          { name: 'Author', value: `[${signal.author}](https://x.com/${signal.author.replace(/^@/, '')})`, inline: true },
           { name: 'Category', value: `${signal.category} — ${titleCategory}`, inline: true },
-          { name: 'Confidence', value: `${signal.confidence}%`, inline: true },
+          { name: 'Alert Confidence', value: `${signal.confidence}%`, inline: true },
           { name: 'Sentiment', value: sentimentLabel(signal.sentiment), inline: true },
           { name: 'Priority', value: priorityLabel(signal.priority), inline: true },
           { name: 'Risk', value: riskLabel(signal.riskLevel), inline: true },
