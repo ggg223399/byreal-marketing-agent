@@ -1,3 +1,8 @@
+// Task 6: Configurable tones infrastructure ready - ToneConfig type available from '../types/index.js'
+// Task 7: Ephemeral followUp + dual-posting to be added
+// Task 8: Twice-daily summary to be added
+
+
 import { Client, Events, GatewayIntentBits, TextChannel } from 'discord.js';
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { logger } from '../logger.js';
