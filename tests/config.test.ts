@@ -100,13 +100,14 @@ describe('config loader', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('reads notification channels', () => {
+  it('reads notification channel names', () => {
     const dir = makeTmpDir();
     const file = path.join(dir, 'n.yaml');
-    writeFileSync(file, 'notifications:\n  urgentChannel: urgent\n  allChannel: all\n');
+    writeFileSync(file, 'notifications:\n  risk_channel: "my-risk"\n  opportunities_channel: "my-opp"\n  ecosystem_channel: "my-eco"\n');
     const config = loadConfig(file);
-    expect(config.notifications.urgentChannel).toBe('urgent');
-    expect(config.notifications.allChannel).toBe('all');
+    expect(config.notifications.riskChannel).toBe('my-risk');
+    expect(config.notifications.opportunitiesChannel).toBe('my-opp');
+    expect(config.notifications.ecosystemChannel).toBe('my-eco');
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -130,13 +131,15 @@ describe('config loader', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('returns default channels when missing', () => {
+  it('returns default channel names and empty digest webhook when missing', () => {
     const dir = makeTmpDir();
     const file = path.join(dir, 'z.yaml');
     writeFileSync(file, '{}');
     const config = loadConfig(file);
-    expect(config.notifications.urgentChannel).toBe('urgent-signals');
-    expect(config.notifications.digestChannel).toBe('daily-digest');
+    expect(config.notifications.riskChannel).toBe('risk-alerts');
+    expect(config.notifications.opportunitiesChannel).toBe('opportunities');
+    expect(config.notifications.ecosystemChannel).toBe('ecosystem-feed');
+    expect(config.notifications.digestWebhookUrl).toBe('');
     rmSync(dir, { recursive: true, force: true });
   });
 

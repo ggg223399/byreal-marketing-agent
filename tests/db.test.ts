@@ -17,15 +17,22 @@ import {
   recordApproval,
   setConfigOverride,
 } from '../db/index.js';
+import type { SignalCategory } from '../types/index.js';
 
 function mkSignal(tweetId: string, alertLevel: 'red' | 'orange' | 'yellow' | 'none' = 'none') {
+  const category: SignalCategory = alertLevel === 'yellow' ? 4 : 1;
+
   return {
     tweetId,
     author: '@a',
     content: `content ${tweetId}`,
     url: `https://x.com/${tweetId}`,
-    signalClass: alertLevel === 'yellow' ? ('watch_only' as const) : ('reply_needed' as const),
-    confidence: 0.7,
+    category,
+    confidence: 70,
+    sentiment: 'neutral',
+    priority: 3,
+    riskLevel: 'low',
+    suggestedAction: 'monitor',
     alertLevel,
     sourceAdapter: 'mock',
     rawJson: '{}',
@@ -171,7 +178,7 @@ describe('db/index', () => {
   it('pending signals return mapped field names', () => {
     insertSignal(mkSignal('map1', 'yellow'));
     const pending = getPendingSignals(1)[0];
-    expect(pending.signalClass).toBe('watch_only');
+    expect(pending.category).toBe(4);
     expect(pending.alertLevel).toBe('yellow');
     expect(pending.sourceAdapter).toBe('mock');
   });
