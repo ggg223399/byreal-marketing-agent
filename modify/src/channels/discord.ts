@@ -1,4 +1,6 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Client, EmbedBuilder, Events, GatewayIntentBits, Message, MessageActionRowComponentBuilder, TextChannel } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Client, EmbedBuilder, Events, GatewayIntentBits, Message, MessageActionRowComponentBuilder, TextChannel, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, AnyThreadChannel, TextInputComponent } from 'discord.js';
+import * as fs from 'fs';
+import { resolve } from 'path';
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { logger } from '../logger.js';
 import { Channel, OnChatMetadata, OnInboundMessage, RegisteredGroup } from '../types.js';
@@ -12,10 +14,18 @@ export interface DiscordChannelOpts {
 
 type ToneConfig = { id: string; label: string; emoji: string; description: string };
 
-type DraftSignal = { id: number; author: string; content: string; category: number; confidence: number };
+type DraftSignal = {
+  id: number;
+  author: string;
+  content: string;
+  category: number;
+  confidence: number;
+  sentiment?: 'positive' | 'negative' | 'neutral';
+  riskLevel?: string;
+  alertLevel?: string;
+  created_at?: string;
+};
 type SignalCategories = Record<number, string>;
-
-type ToneKey = string;
 
 const SIGNAL_CATEGORIES: SignalCategories = {
   1: '🚀 solana_growth_milestone',
@@ -56,49 +66,96 @@ function titleCaseCategory(raw: string): string {
     .join(' ');
 }
 
-function buildGenerateReplyRow(signalId: number) {
-  return new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId('ma_generate:' + signalId)
-      .setLabel('✨ Generate Reply')
-      .setStyle(ButtonStyle.Success),
-  );
-}
-
-function buildToneButtonRow(tones: ToneConfig[], signalId: number) {
-  return new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(
-    ...tones.map((tone, i) =>
-      new ButtonBuilder()
-        .setCustomId('ma_tone:' + i + ':' + signalId)
-        .setLabel(formatToneLabel(tone))
-        .setStyle(i === 0 ? ButtonStyle.Success : ButtonStyle.Primary)
-    ),
-  );
-}
-
-function buildSignalSummaryEmbed(signal: DraftSignal, categories: SignalCategories): EmbedBuilder {
+function buildSignalEmbed(signal: DraftSignal, categories: SignalCategories): EmbedBuilder {
   const category = categories[signal.category] ?? `unknown_${signal.category}`;
   const categoryName = titleCaseCategory(category);
-  const content = signal.content.replace(/\s+/g, ' ').trim().slice(0, 220);
+  const content = signal.content.replace(/\s+/g, ' ').trim().slice(0, 280);
+
+  const riskColors: Record<string, number> = { red: 0xf23f43, orange: 0xf0b232, yellow: 0xf0b232 };
+  const borderColor = riskColors[signal.alertLevel || 'none'] ?? 0x23a559;
+
+  const conf = signal.confidence ?? 0;
+  const meter = conf >= 90 ? '▓▓▓▓▓▓▓▓▓' : conf >= 70 ? '▓▓▓▓▓▓▓░░' : conf >= 50 ? '▓▓▓▓▓░░░░' : '▓▓▓░░░░░░';
+  const confidenceMeter = `${meter} ${conf}%`;
+
+  const sentimentEmoji = signal.sentiment === 'positive' ? '🟢' : signal.sentiment === 'negative' ? '🔴' : '⚪';
+  const createdAt = signal.created_at ? new Date(signal.created_at) : new Date();
 
   return new EmbedBuilder()
-    .setColor(0x5865f2)
-    .setTitle(`📋 Signal #${signal.id} — ${categoryName}`)
-    .setDescription(`@${signal.author} · Confidence ${signal.confidence}%\n> ${content}\n\nClick Generate Reply to open an ephemeral draft.`)
-    .setFooter({ text: `#${signal.id}` });
+    .setColor(borderColor)
+    .setTitle(`📋 #${signal.id} · ${categoryName}`)
+    .setDescription(`> ${content}`)
+    .addFields(
+      { name: 'Confidence', value: confidenceMeter, inline: true },
+      { name: 'Sentiment', value: `${sentimentEmoji} ${signal.sentiment || 'neutral'}`, inline: true },
+      { name: 'Risk', value: signal.riskLevel ? signal.riskLevel.charAt(0).toUpperCase() + signal.riskLevel.slice(1) : 'Low', inline: true },
+    )
+    .setFooter({ text: `@${signal.author} · Signal #${signal.id}` })
+    .setTimestamp(createdAt);
 }
 
-function buildDraftEmbed(signal: DraftSignal, toneLabel: string, draftText: string): EmbedBuilder {
-  const originalContent = signal.content.replace(/\s+/g, ' ').trim().slice(0, 200);
-  const safeToneLabel = toneLabel || 'Draft';
-  const description =
-    '**Original** (@' + signal.author + '):\n> ' + originalContent + '\n\n**Draft:**\n' + draftText + '\n\n💡 Copy and paste to Twitter';
+function buildDraftReplyEmbed(signal: DraftSignal, toneLabel: string, draftText: string): EmbedBuilder {
+  const safeDraftText = draftText.replace(/```/g, "'''").trim();
   return new EmbedBuilder()
     .setColor(0x2ecc71)
-    .setTitle('📝 Draft Reply — ' + safeToneLabel)
-    .setDescription(description)
-    .setFooter({ text: '#' + signal.id + ' · ' + safeToneLabel })
+    .setTitle(`📝 Draft Reply — ${toneLabel}`)
+    .setDescription(`\`\`\`\n${safeDraftText}\n\`\`\`\n\n💡 Copy and paste to Twitter`)
+    .setFooter({ text: `Signal #${signal.id} · ${toneLabel}` })
     .setTimestamp(new Date());
+}
+
+function buildToneActionRow(tones: ToneConfig[], signalId: number): ActionRowBuilder<MessageActionRowComponentBuilder> {
+  const row = new ActionRowBuilder<MessageActionRowComponentBuilder>();
+  const displayTones = tones.slice(0, 3);
+
+  displayTones.forEach((tone, i) => {
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`ma_tone:${i}:${signalId}`)
+        .setLabel(formatToneLabel(tone))
+        .setStyle(i === 0 ? ButtonStyle.Success : ButtonStyle.Primary)
+    );
+  });
+
+  row.addComponents(
+    new ButtonBuilder()
+      .setCustomId(`ma_context:${signalId}`)
+      .setLabel('✨ +Context')
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  return row;
+}
+
+function buildFeedbackSelectRow(signalId: number): ActionRowBuilder<MessageActionRowComponentBuilder> {
+  return new ActionRowBuilder<MessageActionRowComponentBuilder>()
+    .addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId(`ma_feedback:${signalId}`)
+        .setPlaceholder('📋 Signal Feedback')
+        .addOptions(
+          new StringSelectMenuOptionBuilder().setLabel('❌ Not Relevant').setValue('not_relevant').setDescription('Signal is not relevant to Byreal'),
+          new StringSelectMenuOptionBuilder().setLabel('🔄 Wrong Category').setValue('wrong_category').setDescription('Signal is in the wrong category'),
+          new StringSelectMenuOptionBuilder().setLabel('📉 Low Quality').setValue('low_quality').setDescription('Signal is noise / low quality'),
+          new StringSelectMenuOptionBuilder().setLabel('🔁 Duplicate').setValue('duplicate').setDescription('Already seen this signal'),
+          new StringSelectMenuOptionBuilder().setLabel('✅ Good Signal').setValue('good_signal').setDescription('Correct classification, good signal'),
+        )
+    );
+}
+
+function buildProcessedSignalEmbed(original: EmbedBuilder, feedbackType: string, feedbackBy: string): EmbedBuilder {
+  const data = original.data;
+  const processedAt = data.timestamp ? new Date(data.timestamp) : new Date();
+  return new EmbedBuilder()
+    .setColor(0x95a5a6)
+    .setTitle(`[已反馈] ${data.title || 'Signal'}`)
+    .setDescription(data.description ?? null)
+    .setFields(
+      ...(data.fields || []),
+      { name: 'Feedback', value: `${feedbackType} by ${feedbackBy}`, inline: false }
+    )
+    .setFooter(data.footer ?? null)
+    .setTimestamp(processedAt);
 }
 
 export class DiscordChannel implements Channel {
@@ -106,6 +163,7 @@ export class DiscordChannel implements Channel {
   private client: Client | null = null;
   private opts: DiscordChannelOpts;
   private botToken: string;
+  private contextMap = new Map<string, { context: string; toneInput: string; timestamp: number }>();
 
   constructor(botToken: string, opts: DiscordChannelOpts) {
     this.botToken = botToken;
@@ -126,10 +184,11 @@ export class DiscordChannel implements Channel {
         return true;
       }
 
-      const row = buildGenerateReplyRow(signal.id);
+      const row1 = buildToneActionRow(DEFAULT_TONES, signal.id);
+      const row2 = buildFeedbackSelectRow(signal.id);
       await (message.channel as TextChannel).send({
-        embeds: [buildSignalSummaryEmbed(signal, SIGNAL_CATEGORIES)],
-        components: [row],
+        embeds: [buildSignalEmbed(signal, SIGNAL_CATEGORIES)],
+        components: [row1, row2],
       });
 
       return true;
@@ -180,16 +239,7 @@ export class DiscordChannel implements Channel {
               continue;
             }
 
-            const payload = routerModule.formatSignalForDiscord(signal);
-            const embedData = payload.embeds[0];
-
-            const embed = new EmbedBuilder()
-              .setColor(embedData.color)
-              .setTitle(embedData.title)
-              .setDescription(embedData.description)
-              .setFields(embedData.fields)
-              .setFooter(embedData.footer)
-              .setTimestamp(new Date(embedData.timestamp));
+            const embed = buildSignalEmbed(signal, SIGNAL_CATEGORIES);
 
             if (signal.url) {
               embed.setURL(signal.url);
@@ -211,8 +261,10 @@ export class DiscordChannel implements Channel {
                   actionEmbed.setColor(0xE67E22);
                 }
                 if (actionChannelName === needsReplyName) {
-                  const row = buildGenerateReplyRow(signal.id);
-                  await actionChannel.send({ embeds: [actionEmbed], components: [row] });
+                  const tones = getConfiguredTones(config);
+                  const toneRow = buildToneActionRow(tones, signal.id);
+                  const feedbackRow = buildFeedbackSelectRow(signal.id);
+                  await actionChannel.send({ embeds: [actionEmbed], components: [toneRow, feedbackRow] });
                 } else {
                   await actionChannel.send({ embeds: [actionEmbed] });
                 }
@@ -478,142 +530,281 @@ export class DiscordChannel implements Channel {
     });
 
     this.client.on(Events.InteractionCreate, async (interaction: any) => {
-      if (!interaction.isButton()) return;
+      if (!(interaction.isButton() || interaction.isStringSelectMenu() || interaction.isModalSubmit())) return;
 
       const customId = interaction.customId as string;
       if (!customId.startsWith('ma_')) return;
 
       const [action, a, b] = customId.split(':');
 
-      if (action === 'ma_generate') {
-        const signalId = Number(a);
-        if (!Number.isFinite(signalId)) {
-          await interaction.reply({ content: '⚠️ Invalid signal id.', ephemeral: true }).catch(() => undefined);
-          return;
-        }
+      if (action === 'ma_tone' || action === 'ma_context') {
+        if (action === 'ma_tone') {
+          const toneIndex = Number(a);
+          const signalId = Number(b);
 
-        await interaction.reply({ content: '✨ Generating draft...', ephemeral: true }).catch(() => undefined);
-
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const [dbModule, genModule, configModule] = await Promise.all([
-            import('../../marketing-agent/db/index.js') as Promise<any>,
-            import('../../marketing-agent/generator/draft.js') as Promise<any>,
-            import('../../marketing-agent/config/loader.js') as Promise<any>,
-          ]);
-
-          const signal: DraftSignal | null = dbModule.getSignalById(signalId);
-          if (!signal) {
-            await interaction.editReply({ content: '⚠️ Signal not found', components: [] }).catch(() => undefined);
+          if (!Number.isFinite(toneIndex) || !Number.isFinite(signalId)) {
+            await interaction.reply({ content: '⚠️ Invalid action.', flags: 64 }).catch(() => undefined);
             return;
           }
 
-          const config = configModule.loadConfig();
-          const tones = getConfiguredTones(config);
-          const toneIndex = 0;
-          const tone = tones[toneIndex];
-          const toneLabel = formatToneLabel(tone);
+          await interaction.deferReply({ flags: 64 });
 
-          const draftText: string = await genModule.generateSingleToneDraft(signal, tone.id);
-          const row = buildToneButtonRow(tones, signal.id);
+          try {
+            const [dbModule, genModule, configModule] = await Promise.all([
+              import('../../marketing-agent/db/index.js') as Promise<any>,
+              import('../../marketing-agent/generator/draft.js') as Promise<any>,
+              import('../../marketing-agent/config/loader.js') as Promise<any>,
+            ]);
 
-          await interaction.editReply({
-            content: '',
-            embeds: [buildDraftEmbed(signal, toneLabel, draftText)],
-            components: [row],
-          }).catch(() => undefined);
-        } catch (err) {
-          logger.error({ err, signalId }, 'Generate Reply handler failed');
-          await interaction.editReply({ content: '⚠️ Failed to generate draft. Check logs.', components: [] }).catch(() => undefined);
+            const signal = dbModule.getSignalById(signalId);
+            if (!signal) {
+              await interaction.editReply({ content: '⚠️ Signal not found', components: [] });
+              return;
+            }
+
+            const config = configModule.loadConfig();
+            const tones = getConfiguredTones(config);
+            const tone = tones[toneIndex];
+            if (!tone) {
+              await interaction.editReply({ content: '⚠️ Invalid tone.', components: [] });
+              return;
+            }
+
+            const contextKey = `${interaction.user.id}:${signalId}`;
+            const storedContext = this.contextMap.get(contextKey);
+            const context = storedContext?.context;
+            const toneLabel = formatToneLabel(tone);
+
+            const signalMessage = interaction.message;
+            let thread: AnyThreadChannel;
+
+            if (signalMessage.hasThread && signalMessage.thread) {
+              thread = signalMessage.thread;
+            } else {
+              thread = await signalMessage.startThread({
+                name: `Draft — Signal #${signalId}`,
+                autoArchiveDuration: 1440,
+              });
+            }
+
+            const loadingMsg = await thread.send(`⏳ Generating draft with ${toneLabel} tone...`);
+            const draftText = await genModule.generateSingleToneDraft(signal, tone.id, context);
+            const draftEmbed = buildDraftReplyEmbed(signal, toneLabel, draftText);
+            await loadingMsg.edit({ content: '', embeds: [draftEmbed] });
+
+            if (storedContext) {
+              this.contextMap.delete(contextKey);
+            }
+            await interaction.editReply({ content: '✅ Draft generated in thread!' });
+          } catch (err) {
+            logger.error({ err, signalId, toneIndex }, 'Tone handler failed');
+            await interaction.editReply({ content: '⚠️ Failed to generate draft.', components: [] });
+          }
+          return;
+        }
+
+        if (action === 'ma_context') {
+          const signalId = Number(a);
+          if (!Number.isFinite(signalId)) {
+            await interaction.reply({ content: '⚠️ Invalid signal id.', flags: 64 }).catch(() => undefined);
+            return;
+          }
+
+          try {
+            const configModule: any = await import('../../marketing-agent/config/loader.js');
+            const config = configModule.loadConfig();
+            const tones = getConfiguredTones(config);
+
+            const modal = new ModalBuilder()
+              .setCustomId('ma_ctx_submit:' + signalId)
+              .setTitle('Custom Context for Signal #' + signalId);
+
+            const toneInput = new TextInputBuilder()
+              .setCustomId('tone_input')
+              .setLabel('Tone (optional)')
+              .setStyle(TextInputStyle.Short)
+              .setPlaceholder(tones.slice(0, 3).map((t) => t.label).join(' / '))
+              .setRequired(false);
+
+            const contextInput = new TextInputBuilder()
+              .setCustomId('context_input')
+              .setLabel('Additional Context')
+              .setStyle(TextInputStyle.Paragraph)
+              .setPlaceholder('Any additional context for the AI when generating the reply...')
+              .setRequired(true);
+
+            modal.addComponents(
+              new ActionRowBuilder<TextInputBuilder>().addComponents(toneInput),
+              new ActionRowBuilder<TextInputBuilder>().addComponents(contextInput),
+            );
+
+            await interaction.showModal(modal);
+          } catch (err) {
+            logger.error({ err, signalId }, 'Context modal failed');
+            await interaction.reply({ content: '⚠️ Failed to open modal.', flags: 64 }).catch(() => undefined);
+          }
+          return;
         }
 
         return;
       }
 
-      if (action === 'ma_tone') {
-        const toneKey: ToneKey | undefined = a;
-        const signalId = Number(b);
+      if (action === 'ma_ctx_submit') {
+        const signalId = Number(customId.split(':')[1]);
+        const toneInput = interaction.fields.getTextInputValue('tone_input');
+        const contextInput = interaction.fields.getTextInputValue('context_input');
 
-        if (!toneKey || !Number.isFinite(signalId)) {
-          await interaction.reply({ content: '⚠️ Invalid tone action.', ephemeral: true }).catch(() => undefined);
-          return;
-        }
-
-        // If this button lives on an ephemeral interaction message, update it in-place.
-        const canUpdateMessage = Boolean(interaction.message?.interaction);
-
-        if (!canUpdateMessage) {
-          await interaction.reply({ content: '✨ Generating draft...', ephemeral: true }).catch(() => undefined);
-        } else {
-          await interaction.deferUpdate().catch(() => undefined);
-          await interaction.message.edit({ content: '✨ Generating draft...', embeds: [], components: [] }).catch(() => undefined);
-        }
+        await interaction.deferReply({ flags: 64 });
 
         try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const [dbModule, genModule, configModule] = await Promise.all([
             import('../../marketing-agent/db/index.js') as Promise<any>,
             import('../../marketing-agent/generator/draft.js') as Promise<any>,
             import('../../marketing-agent/config/loader.js') as Promise<any>,
           ]);
 
+          const signal = dbModule.getSignalById(signalId);
+          if (!signal) {
+            await interaction.editReply({ content: '⚠️ Signal not found' });
+            return;
+          }
+
           const config = configModule.loadConfig();
           const tones = getConfiguredTones(config);
 
-          let toneIndex = Number(toneKey);
-          if (!Number.isInteger(toneIndex)) {
-            toneIndex = tones.findIndex((t) => t.id === toneKey);
+          let toneIndex = 0;
+          if (toneInput) {
+            const found = tones.findIndex(
+              (t) =>
+                t.label.toLowerCase().includes(toneInput.toLowerCase())
+                || t.id.toLowerCase().includes(toneInput.toLowerCase()),
+            );
+            if (found >= 0) toneIndex = found;
           }
-
-          if (toneIndex < 0 || toneIndex >= tones.length) {
-            const msg = '⚠️ Unsupported tone.';
-            if (canUpdateMessage) {
-              await interaction.followUp({ content: msg, ephemeral: true }).catch(() => undefined);
-            } else {
-              await interaction.editReply({ content: msg, components: [] }).catch(() => undefined);
-            }
-            return;
-          }
-
-          const signal: DraftSignal | null = dbModule.getSignalById(signalId);
-          if (!signal) {
-            const msg = '⚠️ Signal not found';
-            if (canUpdateMessage) {
-              await interaction.followUp({ content: msg, ephemeral: true }).catch(() => undefined);
-            } else {
-              await interaction.editReply({ content: msg, components: [] }).catch(() => undefined);
-            }
-            return;
-          }
-
           const tone = tones[toneIndex];
           const toneLabel = formatToneLabel(tone);
-          const draftText: string = await genModule.generateSingleToneDraft(signal, tone.id);
-          const row = buildToneButtonRow(tones, signal.id);
 
-          if (canUpdateMessage) {
-            await interaction.message.edit({
-              content: '',
-              embeds: [buildDraftEmbed(signal, toneLabel, draftText)],
-              components: [row],
-            }).catch(() => undefined);
+          const contextKey = `${interaction.user.id}:${signalId}`;
+          this.contextMap.set(contextKey, { context: contextInput, toneInput, timestamp: Date.now() });
+
+          const signalMessage = interaction.message;
+          let thread: AnyThreadChannel;
+
+          if (signalMessage.hasThread && signalMessage.thread) {
+            thread = signalMessage.thread;
           } else {
-            await interaction.editReply({
-              content: '',
-              embeds: [buildDraftEmbed(signal, toneLabel, draftText)],
-              components: [row],
-            }).catch(() => undefined);
+            thread = await signalMessage.startThread({
+              name: `Draft — Signal #${signalId}`,
+              autoArchiveDuration: 1440,
+            });
           }
+
+          const loadingMsg = await thread.send('⏳ Generating draft with context...');
+          const draftText = await genModule.generateSingleToneDraft(signal, tone.id, contextInput);
+          const draftEmbed = buildDraftReplyEmbed(signal, toneLabel, draftText);
+          await loadingMsg.edit({ content: '', embeds: [draftEmbed] });
+
+          await interaction.editReply({ content: '✅ Draft generated in thread!' });
         } catch (err) {
-          logger.error({ err, signalId, toneKey }, 'Draft tone button handler failed');
-          const msg = '⚠️ Failed to generate draft. Check logs.';
-          if (canUpdateMessage) {
-            await interaction.followUp({ content: msg, ephemeral: true }).catch(() => undefined);
-          } else {
-            await interaction.editReply({ content: msg, components: [] }).catch(() => undefined);
-          }
+          logger.error({ err, signalId }, 'Context submit handler failed');
+          await interaction.editReply({ content: '⚠️ Failed to generate draft.' });
+        }
+        return;
+      }
+
+      if (action === 'ma_feedback') {
+        const feedbackValue = interaction.values[0];
+        const signalId = Number(b);
+
+        if (!feedbackValue || !Number.isFinite(signalId)) {
+          await interaction.reply({ content: '⚠️ Invalid feedback.', flags: 64 }).catch(() => undefined);
+          return;
         }
 
+        await interaction.deferReply({ flags: 64 });
+
+        try {
+          const [dbModule] = await Promise.all([
+            import('../../marketing-agent/db/index.js') as Promise<any>,
+          ]);
+
+          const signal = dbModule.getSignalById(signalId);
+          if (!signal) {
+            await interaction.editReply({ content: '⚠️ Signal not found' });
+            return;
+          }
+
+          const feedbackLabels: Record<string, string> = {
+            not_relevant: '❌ Not Relevant',
+            wrong_category: '🔄 Wrong Category',
+            low_quality: '📉 Low Quality',
+            duplicate: '🔁 Duplicate',
+            good_signal: '✅ Good Signal',
+          };
+          const feedbackLabel = feedbackLabels[feedbackValue] || feedbackValue;
+
+          const classificationPath = resolve(process.cwd(), 'marketing-agent/prompts/classification.md');
+          try {
+            let content = fs.readFileSync(classificationPath, 'utf-8');
+            const timestamp = new Date().toISOString();
+            const userName = interaction.user.displayName || interaction.user.username;
+
+            if (!content.includes('## Learned Corrections')) {
+              content += '\n\n## Learned Corrections\n';
+            }
+
+            const snippet = signal.content.length > 100 ? `${signal.content.slice(0, 100)}...` : signal.content;
+            const correction = `\n- Signal #${signalId} (category ${signal.category}): Feedback "${feedbackLabel}" by ${userName} at ${timestamp}\n  Content: "${snippet}"`;
+            content += correction;
+
+            const entries = content.match(/\n- Signal #\d+/g) || [];
+            if (entries.length > 50) {
+              const lines = content.split('\n');
+              const headerIndex = lines.findIndex((line) => line.trim() === '## Learned Corrections');
+              if (headerIndex >= 0) {
+                const before = lines.slice(0, headerIndex + 1);
+                const block = lines.slice(headerIndex + 1);
+
+                const grouped: string[] = [];
+                let current: string[] = [];
+                for (const line of block) {
+                  if (line.startsWith('- Signal #')) {
+                    if (current.length > 0) grouped.push(current.join('\n'));
+                    current = [line];
+                  } else if (current.length > 0) {
+                    current.push(line);
+                  }
+                }
+                if (current.length > 0) grouped.push(current.join('\n'));
+
+                const kept = grouped.slice(-50);
+                content = [...before, '', ...kept.flatMap((entry) => entry.split('\n'))].join('\n');
+              }
+            }
+
+            fs.writeFileSync(classificationPath, content, 'utf-8');
+          } catch (fileErr) {
+            logger.warn({ err: fileErr }, 'Failed to update classification.md');
+          }
+
+          const signalMessage = interaction.message;
+          if (signalMessage) {
+            const existingEmbed = signalMessage.embeds[0];
+            if (existingEmbed) {
+              const processedEmbed = buildProcessedSignalEmbed(
+                EmbedBuilder.from(existingEmbed),
+                feedbackLabel,
+                interaction.user.displayName || interaction.user.username
+              );
+              await signalMessage.edit({ embeds: [processedEmbed], components: [] });
+            }
+          }
+
+          await interaction.editReply({ content: `✅ Feedback recorded: ${feedbackLabel}. Signal marked as processed.` });
+        } catch (err) {
+          logger.error({ err, signalId, feedbackValue }, 'Feedback handler failed');
+          await interaction.editReply({ content: '⚠️ Failed to process feedback.' });
+        }
         return;
       }
     });
@@ -631,6 +822,14 @@ export class DiscordChannel implements Channel {
         );
         this.startSignalPolling();
         this.startSummaryScheduler();
+        setInterval(() => {
+          const now = Date.now();
+          for (const [key, value] of this.contextMap.entries()) {
+            if (now - value.timestamp > 30 * 60 * 1000) {
+              this.contextMap.delete(key);
+            }
+          }
+        }, 10 * 60 * 1000);
         resolve();
       });
 

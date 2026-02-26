@@ -4,6 +4,28 @@ import type { DraftReply, DraftTone, DraftVariant, Signal, SignalCategory } from
 import * as fs from 'fs';
 import * as path from 'path';
 
+function readSecret(key: string): string | undefined {
+  if (process.env[key]) return process.env[key];
+  try {
+    const envFile = path.join(process.cwd(), '.env');
+    const content = fs.readFileSync(envFile, 'utf-8');
+    for (const line of content.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eqIdx = trimmed.indexOf('=');
+      if (eqIdx === -1) continue;
+      const k = trimmed.slice(0, eqIdx).trim();
+      if (k !== key) continue;
+      let v = trimmed.slice(eqIdx + 1).trim();
+      if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+        v = v.slice(1, -1);
+      }
+      return v || undefined;
+    }
+  } catch {}
+  return undefined;
+}
+
 const MODEL = 'claude-3-5-haiku-20241022';
 const TEMPERATURE = 0.7;
 
@@ -153,10 +175,12 @@ function fallbackSingleToneDraft(signal: Signal, tone: DraftTone): string {
   return `Fair point, @${signal.author}. We are actively improving reliability and transparency - if you share the exact pain point, we can address it directly.`;
 }
 
-function buildSingleToneUserPrompt(signal: Signal, tone: DraftTone): string {
+function buildSingleToneUserPrompt(signal: Signal, tone: DraftTone, context?: string): string {
   const categoryName = SIGNAL_CATEGORIES[signal.category] ?? 'unknown_category';
+  const contextSection = context ? `Additional context from team: ${context}\n\n` : '';
   return [
     'Generate exactly one reply variant for this tweet.',
+    contextSection,
     `Required tone: ${tone}`,
     `Author: ${signal.author}`,
     `Category: ${signal.category} (${categoryName})`,
@@ -166,7 +190,7 @@ function buildSingleToneUserPrompt(signal: Signal, tone: DraftTone): string {
   ].join('\n');
 }
 
-export async function generateSingleToneDraft(signal: Signal, tone: DraftTone): Promise<string> {
+export async function generateSingleToneDraft(signal: Signal, tone: DraftTone, context?: string): Promise<string> {
   const mocked = process.env.MOCK_DRAFT_RESPONSE;
   if (mocked) {
     const variants = parseVariants(mocked);
@@ -176,7 +200,7 @@ export async function generateSingleToneDraft(signal: Signal, tone: DraftTone): 
     }
   }
 
-  if (!process.env.CLAUDE_CODE_OAUTH_TOKEN && !process.env.ANTHROPIC_API_KEY) {
+  if (!readSecret('CLAUDE_CODE_OAUTH_TOKEN') && !readSecret('ANTHROPIC_API_KEY')) {
     return fallbackSingleToneDraft(signal, tone);
   }
 
@@ -185,7 +209,7 @@ export async function generateSingleToneDraft(signal: Signal, tone: DraftTone): 
     'Generate only one reply in the requested tone.',
     'Return plain text or JSON object with a single "text" field.',
   ].join('\n');
-  const userPrompt = buildSingleToneUserPrompt(signal, tone);
+  const userPrompt = buildSingleToneUserPrompt(signal, tone, context);
 
   try {
     const raw = await callClaudeText({
@@ -218,7 +242,7 @@ export async function generateDraft(signal: Signal): Promise<DraftReply> {
     };
   }
 
-  if (!process.env.CLAUDE_CODE_OAUTH_TOKEN && !process.env.ANTHROPIC_API_KEY) {
+  if (!readSecret('CLAUDE_CODE_OAUTH_TOKEN') && !readSecret('ANTHROPIC_API_KEY')) {
     return {
       signalId: signal.id,
       variants: [

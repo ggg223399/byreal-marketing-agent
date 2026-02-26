@@ -9,8 +9,8 @@ adds:
   - marketing-agent/collector/adapters/twitter-v2.ts
   - marketing-agent/collector/adapters/twitterapiio.ts
   - marketing-agent/collector/adapters/xai-search.ts
-  - marketing-agent/collector/adapters/xpoz.ts
-  - marketing-agent/collector/collect.ts
+  - marketing-agent/collector/ad
+  - marketingapters/xpoz.ts-agent/collector/collect.ts
   - marketing-agent/config/loader.ts
   - marketing-agent/db/index.ts
   - marketing-agent/db/migrate.ts
@@ -46,8 +46,7 @@ structured:
     yaml: "^2.0.0"
   env_additions:
     - DATA_SOURCE_API_KEY
-depends:
-  - discord
+depends: []
 conflicts: []
 post_apply:
   - "npx tsx marketing-agent/db/migrate.ts"
