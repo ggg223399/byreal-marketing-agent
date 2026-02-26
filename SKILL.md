@@ -25,12 +25,12 @@ AskUserQuestion: Do you have the API key for your chosen data source?
 ### Initialize skills system (if needed)
 If `.nanoclaw/` directory doesn't exist:
 ```bash
-npx tsx scripts/apply-skill.ts --init
+npx tsx -e "import { initSkillsSystem } from './skills-engine/migrate.ts'; initSkillsSystem();"
 ```
 
 ### Apply the skill
 ```bash
-npx tsx scripts/apply-skill.ts .claude/skills/add-marketing-agent
+npx tsx -e "import { applySkill } from './skills-engine/index.ts'; applySkill('.claude/skills/add-marketing-agent').then(r => console.log(JSON.stringify(r, null, 2))).catch(e => { console.error(e); process.exit(1); });"
 ```
 
 This deterministically:

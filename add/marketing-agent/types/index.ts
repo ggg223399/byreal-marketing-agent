@@ -83,6 +83,7 @@ export type DraftTone = string;
 
 export interface DraftVariant {
   tone: DraftTone;
+  text: string;
 }
 
 export interface ToneConfig {

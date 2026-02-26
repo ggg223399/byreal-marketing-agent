@@ -35,9 +35,11 @@ adds:
   - config.yaml.example
 modifies:
   - src/channels/discord.ts
+  - tsconfig.json
   - vitest.config.ts
 structured:
   npm_dependencies:
+    "@anthropic-ai/sdk": "^0.39.0"
     better-sqlite3: "^11.0.0"
     yaml: "^2.0.0"
   env_additions:
