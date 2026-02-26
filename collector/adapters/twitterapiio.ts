@@ -1,4 +1,4 @@
-import { DataSourceAdapter, RawTweet, CollectorConfig } from '../../../types/index.js';
+import { DataSourceAdapter, RawTweet, CollectorConfig } from '../../types/index.js';
 
 const BASE_URL = 'https://api.twitterapi.io';
 const RETRY_DELAY_MS = 2000;

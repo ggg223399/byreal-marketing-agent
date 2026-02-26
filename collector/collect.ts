@@ -1,6 +1,6 @@
 import { insertSignal, InsertSignalInput } from '../db/index.js';
 import { classifyTweets } from '../classifier/classify.js';
-import { DataSourceAdapter } from '../types/index.js';
+import { DataSourceAdapter, SIGNAL_CATEGORIES } from '../types/index.js';
 import { MockAdapter } from './adapters/mock.js';
 import { TwitterApiIoAdapter } from './adapters/twitterapiio.js';
 import { TwitterV2Adapter } from './adapters/twitter-v2.js';
@@ -35,23 +35,6 @@ function isDuplicateError(err: unknown): boolean {
   );
 }
 
-async function notifyRedSignals(signals: InsertSignalInput[], webhookUrl: string): Promise<void> {
-  const content = signals
-    .map(
-      (s) =>
-        `🔴 **${s.author}** | ${s.signalClass} (${(s.confidence * 100).toFixed(0)}%)\n> ${s.content.slice(0, 200)}\n${s.url ?? ''}`
-    )
-    .join('\n\n');
-
-  await fetch(webhookUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      content: `🚨 **${signals.length} RED signal(s) detected**\n\n${content}`,
-    }),
-  });
-}
-
 async function main() {
   const config = loadConfig();
   const adapter = createAdapter(config.dataSource.type);
@@ -59,26 +42,30 @@ async function main() {
   const results = await classifyTweets(tweets, config);
 
   if (DRY_RUN) {
-    const counts = {
-      reply_needed: 0,
-      watch_only: 0,
-      ignore: 0,
+    const counts: Record<number, number> = {
+      1: 0,
+      2: 0,
+      3: 0,
+      4: 0,
+      5: 0,
+      6: 0,
+      7: 0,
+      8: 0,
     };
 
     for (const result of results) {
-      counts[result.signalClass] += 1;
+      counts[result.category] += 1;
     }
 
     console.log(
-      `Fetched ${tweets.length} tweets, classified: {reply_needed: ${counts.reply_needed}, watch_only: ${counts.watch_only}, ignore: ${counts.ignore}} (dry-run, not stored)`
+      `Fetched ${tweets.length} tweets, classified: ${JSON.stringify(counts)} categories=${JSON.stringify(SIGNAL_CATEGORIES)} (dry-run, not stored)`
     );
     process.exit(0);
   }
 
   let stored = 0;
   let skipped = 0;
-  const redSignals: InsertSignalInput[] = [];
-  const newSignals: InsertSignalInput[] = [];
+  let redCount = 0;
   const byTweetId = new Map(results.map((result) => [result.tweetId, result]));
 
   for (const tweet of tweets) {
@@ -92,19 +79,22 @@ async function main() {
       author: tweet.author,
       content: tweet.content,
       url: tweet.url,
-      signalClass: classification.signalClass,
+      category: classification.category,
       confidence: classification.confidence,
+      sentiment: classification.sentiment,
+      priority: classification.priority,
+      riskLevel: classification.riskLevel,
+      suggestedAction: classification.suggestedAction,
       alertLevel: classification.alertLevel,
       sourceAdapter: adapter.name,
       rawJson: JSON.stringify(tweet),
     };
 
     try {
-      insertSignal(input);
+      const inserted = insertSignal(input);
       stored++;
-      newSignals.push(input);
-      if (input.alertLevel === 'red') {
-        redSignals.push(input);
+      if (inserted.alertLevel === 'red') {
+        redCount += 1;
       }
     } catch (err: unknown) {
       if (isDuplicateError(err)) {
@@ -116,61 +106,11 @@ async function main() {
     }
   }
 
-  // Post each new signal to all-signals channel
-  if (newSignals.length > 0 && config.notifications.discordWebhookUrl) {
-    const alertEmoji: Record<string, string> = { red: '🔴', orange: '🟠', yellow: '🟡', none: '⚪' };
-    for (const s of newSignals) {
-      try {
-        const emoji = alertEmoji[s.alertLevel] || '⚪';
-        const conf = `${(s.confidence * 100).toFixed(0)}%`;
-        const preview = s.content.replace(/\s+/g, ' ').trim().slice(0, 200);
-        await fetch(config.notifications.discordWebhookUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            content: `${emoji} **${s.author}** · \`${s.signalClass}\` · ${conf}\n> ${preview}\n${s.url ?? ''}`,
-          }),
-        });
-      } catch (err: unknown) {
-        logJson('error', { message: err instanceof Error ? err.message : String(err) });
-      }
-    }
-  }
-
-  if (redSignals.length > 0 && config.notifications.urgentWebhookUrl) {
-    try {
-      await notifyRedSignals(redSignals, config.notifications.urgentWebhookUrl);
-    } catch (err: unknown) {
-      logJson('error', {
-        message: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-
-  // Post collection summary to all-signals channel
-  if (config.notifications.discordWebhookUrl) {
-    try {
-      await fetch(config.notifications.discordWebhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          content: `📡 **Collection Summary** · ${new Date().toLocaleString('zh-CN', { timeZone: config.notifications.digestTimezone })}\n` +
-            `• Fetched: **${tweets.length}** tweets\n` +
-            `• New: **${stored}** · Duplicates: **${skipped}** · 🔴 Red: **${redSignals.length}**`,
-        }),
-      });
-    } catch (err: unknown) {
-      logJson('error', {
-        message: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-
   logJson('collect', {
     fetched: tweets.length,
     stored,
     skipped,
-    red: redSignals.length,
+    red: redCount,
   });
   process.exit(0);
 }
