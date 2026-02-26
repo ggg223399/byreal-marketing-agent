@@ -1,7 +1,8 @@
 import { getDb, getPendingSignals } from '../db/index.js';
-import type { AlertLevel, SignalClass } from '../types/index.js';
+import { SIGNAL_CATEGORIES } from '../types/index.js';
+import type { AlertLevel, SignalCategory } from '../types/index.js';
 
-type ClassCounts = Record<SignalClass, number>;
+type ClassCounts = Record<SignalCategory, number>;
 type AlertCounts = Record<AlertLevel, number>;
 
 export interface DailyDigest {
@@ -22,7 +23,7 @@ export function generateDailyDigest(targetDate = new Date()): DailyDigest {
   const db = getDb();
   const rows = db
     .prepare(
-      `SELECT id, author, content, signal_class, confidence, alert_level
+      `SELECT id, author, content, category, confidence, alert_level
        FROM signals
        WHERE created_at >= ? AND created_at < ?
        ORDER BY created_at DESC`
@@ -31,15 +32,20 @@ export function generateDailyDigest(targetDate = new Date()): DailyDigest {
     id: number;
     author: string;
     content: string;
-    signal_class: SignalClass;
+    category: SignalCategory;
     confidence: number;
     alert_level: AlertLevel;
   }>;
 
   const classCounts: ClassCounts = {
-    reply_needed: 0,
-    watch_only: 0,
-    ignore: 0,
+    1: 0,
+    2: 0,
+    3: 0,
+    4: 0,
+    5: 0,
+    6: 0,
+    7: 0,
+    8: 0,
   };
   const alertCounts: AlertCounts = {
     red: 0,
@@ -49,7 +55,7 @@ export function generateDailyDigest(targetDate = new Date()): DailyDigest {
   };
 
   for (const row of rows) {
-    classCounts[row.signal_class] += 1;
+    classCounts[row.category] += 1;
     alertCounts[row.alert_level] += 1;
   }
 
@@ -82,15 +88,23 @@ export function formatDailyDigest(digest: DailyDigest): string {
       : digest.highlights
           .map(
             (item) =>
-              `- #${item.id} ${item.author} (${item.alertLevel}, ${(item.confidence * 100).toFixed(0)}%): ${item.content.slice(0, 120)}`
+              `- #${item.id} ${item.author} (${item.alertLevel}, ${item.confidence}%): ${item.content.slice(0, 120)}`
           )
           .join('\n');
+
+  const categoryLine = Object.entries(digest.classCounts)
+    .map(([key, count]) => {
+      const category = Number(key) as SignalCategory;
+      const name = SIGNAL_CATEGORIES[category] ?? `unknown_${key}`;
+      return `${key}(${name})=${count}`;
+    })
+    .join(', ');
 
   return [
     `📊 Daily Marketing Digest (${digest.date})`,
     `Total signals: ${digest.totalSignals}`,
     `Pending review: ${digest.pendingSignals}`,
-    `Classes: reply_needed=${digest.classCounts.reply_needed}, watch_only=${digest.classCounts.watch_only}, ignore=${digest.classCounts.ignore}`,
+    `Categories: ${categoryLine}`,
     `Alerts: red=${digest.alertCounts.red}, orange=${digest.alertCounts.orange}, yellow=${digest.alertCounts.yellow}, none=${digest.alertCounts.none}`,
     '',
     'Highlights:',

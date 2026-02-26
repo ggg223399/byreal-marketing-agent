@@ -24,7 +24,7 @@ async function main(): Promise<void> {
   const content = formatDailyDigest(digest);
 
   console.log(content);
-  await postDigestIfConfigured(content, config.notifications.discordWebhookUrl);
+  await postDigestIfConfigured(content, config.notifications.digestWebhookUrl);
 }
 
 main().catch((error: unknown) => {
