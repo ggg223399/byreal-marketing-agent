@@ -56,23 +56,18 @@ classification:
   temperature: 0
 
 notifications:
-  # Discord 频道名称（Bot 自动匹配频道并发送带按钮的信号通知）
-  risk_channel: marketing-bot            # 风险事件（category 8）
-  opportunities_channel: marketing-bot   # 增长/排名/机构信号
-  ecosystem_channel: marketing-bot      # RWA/流动性/合作伙伴
-
-  # 新增频道路由配置
-  needs_reply_channel: needs-reply           # 需要回复的信号
-  needs_interaction_channel: needs-interaction # 需要互动的信号
-  tier1_channel: tier1-signals               # Tier 1 信号（高优先级）
-  tier2_channel: tier2-signals               # Tier 2 信号（中优先级）
-  tier3_channel: tier3-signals               # Tier 3 信号（低优先级）
+  # v2 频道路由配置（Bot 按频道名自动匹配并发送）
+  needs_reply_channel: needs-reply           # 需要回复的信号（绿色 embed + 语气按钮）
+  needs_interaction_channel: needs-interaction # 需要互动的信号（橙色 embed，无按钮）
+  tier1_channel: tier1-signals               # Tier 1 高优先级信号
+  tier2_channel: tier2-signals               # Tier 2 中优先级信号
+  tier3_channel: tier3-signals               # Tier 3 低优先级信号
   noise_channel: noise                       # 噪音/低价值信号
   summary_channel: periodic-summary          # 周期性摘要频道
+  draft_channel: draft                       # 草稿发布频道（点击语气按钮后发送到这里）
 
-  # Webhook URL（仅用于 cron 脚本发送的非交互通知）
-  digest_webhook_url: "<your-daily-digest-webhook>"  # #daily-digest
-
+  # Webhook（仅用于 cron 脚本推送的 daily digest）
+  digest_webhook_url: "<your-daily-digest-webhook>"
   digest_time: "23:00"
   digest_timezone: "Asia/Shanghai"
 
