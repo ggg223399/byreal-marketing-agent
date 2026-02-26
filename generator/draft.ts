@@ -26,11 +26,6 @@ function loadBrandContext(brandContextPath?: string): string {
     return '';
   }
 }
-import { SIGNAL_CATEGORIES } from '../types/index.js';
-import type { DraftReply, DraftTone, DraftVariant, Signal, SignalCategory } from '../types/index.js';
-
-const MODEL = 'claude-3-5-haiku-20241022';
-const TEMPERATURE = 0.7;
 
 const RECOMMENDED_TONES: Record<SignalCategory, [DraftTone, DraftTone]> = {
   1: ['helpful_expert', 'friendly_peer'],
@@ -113,19 +108,7 @@ function buildSystemPrompt(brandContextPath?: string): string {
   
   return parts.join('\n');
 }
-  return [
-    'You write social media replies for Byreal, a DeFi/Web3 trading platform.',
-    'Produce concise, brand-safe replies under 280 characters each.',
-    'Do not overpromise. Do not mention private or unverifiable facts.',
-    'Return strict JSON only.',
-    '',
-    'Tone guide:',
-    '- helpful_expert: Professional, authoritative, offers concrete value and expertise.',
-    '- friendly_peer: Casual, relatable, peer-to-peer energy, approachable and warm.',
-    '- humble_ack: Grateful, appreciative, acknowledges without being pushy.',
-    '- direct_rebuttal: Addresses concerns constructively, empathetic but clear.',
-  ].join('\n');
-}
+
 
 function buildUserPrompt(signal: Signal): string {
   const categoryName = SIGNAL_CATEGORIES[signal.category] ?? 'unknown_category';
