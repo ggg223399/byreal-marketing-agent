@@ -34,6 +34,9 @@ Replaced the generic NanoClaw DiscordChannel with a marketing-specific version t
 - **Fields**: 
   - Priority · Confidence (inline)
   - Risk · Sentiment (inline)
+  - Action (inline) — with emoji: 📢 Quote Tweet / 💬 Reply · Supportive / 👍 Like Only / 👀 Monitor / 🚨 Escalate · Internal
+  - Priority · Confidence (inline)
+  - Risk · Sentiment (inline)
 - **Footer**: `Signal #ID` with timestamp
 - **Body**: Tweet content + [View Tweet] link + separator line
 - **Color**: Based on alert level (red/orange/yellow/none -> green border)

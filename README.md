@@ -32,7 +32,7 @@ v2 采用 8 频道分层设计，Bot 按频道名自动匹配（不需要 Webhoo
 
 | 频道 | 路由条件 | 功能 |
 |------|---------|------|
-| `#needs-reply` 🟢 | suggestedAction = reply_supportive / qrt_positioning | 需要回复的信号，带上下文语气按钮（第一个按钮高亮绿色），Embed 边框绿色 |
+| `#needs-reply` 🟢 | suggestedAction = reply_supportive / qrt_positioning | 需要回复的信号，Embed 显示 @author - Category 标题，3 个 inline 字段（Priority·Confidence / Risk·Sentiment / Action），5 个语气按钮（第一个高亮绿色）|
 | `#needs-interaction` 🟠 | suggestedAction = like_only / escalate_internal | 需要互动的信号（无按钮，仅信息展示），Embed 边框橙色 |
 | `#draft` 📝 | - | 草稿发布频道，点击语气按钮后草稿发送到这里，带 🗑️ Delete 按钮 |
 
@@ -81,13 +81,37 @@ v2 采用 8 频道分层设计，Bot 按频道名自动匹配（不需要 Webhoo
 
 ### 交互流程
 
+1. 信号出现在 `#needs-reply` 频道，Embed 显示：
+   - **标题**: `@author - Category`（带超链接）
+   - **字段**: Priority·Confidence、Risk·Sentiment、Action（3 个 inline 字段）
+   - **内容**: 推文原文 + [View Tweet] 链接 + 分隔线
+   - **页脚**: `Signal #ID` + 时间戳
+   - 底部带 5 个按钮（Helpful、Friendly、Humble、Direct + Context）
+2. 运营点击按钮 → 草稿发送到 `#draft` 频道（全员可见）
+3. `#draft` 频道的草稿显示原始推文内容 + 回复草稿
+4. 信号 Embed 底部显示 `Signal #ID`（如 `Signal #43`），可用 `draft reply #N` 从任意频道查看
+5. `#needs-interaction` 信号无按钮（仅信息展示），字段与 needs-reply 相同
+
 1. 信号出现在 `#needs-reply` 频道，带 3-4 个上下文相关语气按钮（第一个按钮高亮绿色）
 2. 运营点击按钮 → 草稿发送到 `#draft` 频道（全员可见）
 3. `#draft` 频道的草稿显示原始推文内容 + 回复草稿，带 🗑️ Delete 按钮可删除
 4. 信号 Embed 底部显示 `#ID`（如 `#43`），可用 `draft reply #N` 从任意频道查看
 5. `#needs-interaction` 信号无按钮（仅信息展示）
 
-### 上下文语气按钮
+### 语气按钮
+
+当前实现使用 **4 个默认语气按钮**（所有类别通用）：
+
+| 按钮 | 标签 | 描述 |
+|------|------|------|
+| 1 | Helpful | 专业权威，提供具体价值（高亮绿色） |
+| 2 | Friendly | 轻松对等，亲切友好 |
+| 3 | Humble | 感恩致谢，不强推 |
+| 4 | Direct | 正面回应关切，建设性反驳 |
+
+所有 4 个按钮 + Context 按钮在一行显示（共 5 个按钮）。
+
+> **注意**: 可通过 `config.yaml` 中的 `tones` 配置自定义按钮，最多 5 个。
 
 每个信号类别显示不同的上下文相关按钮：
 
