@@ -1,9 +1,10 @@
 #!/bin/bash
 # Collector runner for cron — sets up environment properly
-# Edit PROJECT_DIR and NODE_BIN to match your installation.
+# PROJECT_DIR is auto-detected from script location (scripts/ → marketing-agent/ → NanoClaw root)
 set -euo pipefail
 
-PROJECT_DIR="$HOME/nanoclaw"                       # ← adjust to your NanoClaw root
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"    # scripts/ → marketing-agent/ → NanoClaw root
 NODE_BIN="$(dirname "$(which node)" 2>/dev/null)"    # auto-detect from PATH; override if needed
 CLAUDE_BIN="$(dirname "$(which claude)" 2>/dev/null)" # claude CLI needed by classifier
 
@@ -21,4 +22,4 @@ mkdir -p logs
 
 # Run collector with timestamp
 echo "--- $(date -Iseconds) ---" >> logs/collector.log
-npx tsx collector/collect.ts >> logs/collector.log 2>&1
+npx tsx marketing-agent/collector/collect.ts >> logs/collector.log 2>&1
