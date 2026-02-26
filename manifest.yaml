@@ -1,0 +1,50 @@
+skill: marketing-agent
+version: 2.0.0
+description: "Byreal Twitter Marketing Agent — AI signal classification + Discord team review workflow"
+core_version: 0.1.0
+adds:
+  - marketing-agent/approval/workflow.ts
+  - marketing-agent/classifier/classify.ts
+  - marketing-agent/collector/adapters/mock.ts
+  - marketing-agent/collector/adapters/twitter-v2.ts
+  - marketing-agent/collector/adapters/twitterapiio.ts
+  - marketing-agent/collector/adapters/xai-search.ts
+  - marketing-agent/collector/adapters/xpoz.ts
+  - marketing-agent/collector/collect.ts
+  - marketing-agent/config/loader.ts
+  - marketing-agent/db/index.ts
+  - marketing-agent/db/migrate.ts
+  - marketing-agent/db/schema.sql
+  - marketing-agent/digest/generate.ts
+  - marketing-agent/digest/run-digest.ts
+  - marketing-agent/generator/draft.ts
+  - marketing-agent/governance/filters.ts
+  - marketing-agent/lib/claude-client.ts
+  - marketing-agent/notifications/router.ts
+  - marketing-agent/prompts/brand_context.md
+  - marketing-agent/prompts/classification.md
+  - marketing-agent/scripts/run-collector.sh
+  - marketing-agent/scripts/collect-on-demand.sh
+  - marketing-agent/tests/adapter.test.ts
+  - marketing-agent/tests/classifier.test.ts
+  - marketing-agent/tests/config.test.ts
+  - marketing-agent/tests/db.test.ts
+  - marketing-agent/tests/governance.test.ts
+  - marketing-agent/types/index.ts
+  - groups/marketing-alerts/CLAUDE.md
+  - config.yaml.example
+modifies:
+  - src/channels/discord.ts
+  - vitest.config.ts
+structured:
+  npm_dependencies:
+    better-sqlite3: "^11.0.0"
+    yaml: "^2.0.0"
+  env_additions:
+    - DATA_SOURCE_API_KEY
+depends:
+  - discord
+conflicts: []
+post_apply:
+  - "npx tsx marketing-agent/db/migrate.ts"
+test: "npx vitest run marketing-agent/tests/"

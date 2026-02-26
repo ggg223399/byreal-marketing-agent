@@ -1,0 +1,105 @@
+# Copy to config.yaml and fill in your webhook URLs
+
+data_source:
+  # 可选数据源：
+  #   mock         — 本地测试用假数据，无需 API Key
+  #   twitterapi_io — 按量计费 $0.15/1K tweets，适合初期（https://twitterapi.io）
+  #   twitter_v2   — 官方 Twitter API v2，Bearer Token，需要 Basic($100/月) 或以上套餐
+  #   xai_search   — 通过 xAI Grok + X Search 获取推文，使用 xAI API Key
+  type: twitterapi_io
+  api_key: ""  # 通过 DATA_SOURCE_API_KEY 环境变量覆盖（mock 无需填写，twitter_v2 用 Bearer Token，xai_search 用 xAI API Key）
+  max_tweets_per_query: 5  # 每次查询最多返回 N 条（1-100），减少 API 用量
+
+monitoring:
+  accounts_tier1:
+    - "@solana"
+    - "@aaboronin"
+    - "@DefiLlama"
+  accounts_partners:
+    - "@xStocksAI"
+  keywords:
+    # Ranking / Comparison
+    - "Byreal vs"
+    - "Top DEX Solana"
+    - "Solana leaderboard"
+    - "DEX comparison"
+    - "Top RWA Solana"
+    - "Solana ranking"
+    - "Top liquidity Solana"
+    # Growth / Capital
+    - "TVL"
+    - "volume spike"
+    - "ATH"
+    - "breakout"
+    - "inflow"
+    - "capital rotation"
+    - "liquidity forming"
+    - "structural shift"
+    # Institutional
+    - "custody"
+    - "tokenized equities"
+    - "RWA issuance"
+    - "TradFi integration"
+    - "ETF"
+    - "Internet Capital Markets"
+    # Risk
+    - "exploit"
+    - "hack"
+    - "drained"
+    - "insolvency"
+    - "rug"
+    - "depeg"
+    - "regulatory ban"
+  polling_interval_minutes: 10
+
+classification:
+  model: "claude-haiku-4-5"
+  temperature: 0
+
+notifications:
+  # v2 频道路由配置（Bot 按频道名自动匹配并发送）
+  needs_reply_channel: needs-reply           # 需要回复的信号（绿色 embed + 语气按钮）
+  needs_interaction_channel: needs-interaction # 需要互动的信号（橙色 embed，无按钮）
+  tier1_channel: tier1-signals               # Tier 1 高优先级信号
+  tier2_channel: tier2-signals               # Tier 2 中优先级信号
+  tier3_channel: tier3-signals               # Tier 3 低优先级信号
+  noise_channel: noise                       # 噪音/低价值信号
+  summary_channel: periodic-summary          # 周期性摘要频道
+  draft_channel: draft                       # 草稿发布频道（点击语气按钮后发送到这里）
+
+  # Webhook（仅用于 cron 脚本推送的 daily digest）
+  digest_webhook_url: "<your-daily-digest-webhook>"
+  digest_time: "23:00"
+  digest_timezone: "Asia/Shanghai"
+
+# 回复语气配置（可选，最多5个，每个id最多20字符）
+tones:
+  - id: helpful_expert
+    label: Helpful Expert
+    emoji: "🧑‍💼"
+    description: "专业权威，提供具体价值"
+  - id: friendly_peer
+    label: Friendly Peer
+    emoji: "👋"
+    description: "轻松对等，亲切友好"
+  - id: humble_ack
+    label: Humble Ack
+    emoji: "🙏"
+    description: "感恩致谢，不强推"
+  - id: direct_rebuttal
+    label: Direct Rebuttal
+    emoji: "💬"
+    description: "正面回应关切，建设性反驳"
+
+# 品牌上下文文件路径（用于生成回复时的品牌语境）
+brand_context_path: "prompts/brand_context.md"
+
+governance:
+  max_replies_per_hour: 5
+  max_replies_per_day: 20
+  blacklist:
+    - "@spam_account"
+  risk_keywords:
+    - "lawsuit"
+    - "hack"
+    - "rug"
