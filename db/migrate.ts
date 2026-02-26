@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 
 const DEFAULT_DB_PATH = process.env.DB_PATH || 'data/signals.db';
@@ -16,7 +17,7 @@ function ensureDbParent(dbPath: string): void {
 }
 
 export function runMigration(dbPath = DEFAULT_DB_PATH): void {
-  const schemaPath = path.resolve(process.cwd(), 'db/schema.sql');
+  const schemaPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'schema.sql');
   const schemaSql = readFileSync(schemaPath, 'utf-8');
 
   console.log('Starting database migration...');

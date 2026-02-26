@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
-import type { AlertLevel, Approval, ApprovalAction, Signal, SignalClass } from '../types/index.js';
+import type { AlertLevel, Approval, ApprovalAction, Signal, SignalCategory } from '../types/index.js';
 
 const DEFAULT_DB_PATH = process.env.DB_PATH || 'data/signals.db';
 
@@ -27,7 +28,7 @@ function ensureSchema(db: Database.Database): void {
     return;
   }
 
-  const schemaPath = path.resolve(process.cwd(), 'db/schema.sql');
+  const schemaPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'schema.sql');
   const schemaSql = readFileSync(schemaPath, 'utf-8');
   db.exec(schemaSql);
 }
@@ -58,12 +59,17 @@ type SignalRow = {
   author: string;
   content: string;
   url: string | null;
-  signal_class: SignalClass;
+  category: SignalCategory;
   confidence: number;
+  sentiment: string | null;
+  priority: number | null;
+  risk_level: string | null;
+  suggested_action: string | null;
   alert_level: AlertLevel;
   source_adapter: string;
   raw_json: string | null;
   created_at: number;
+  notified_at: number | null;
 };
 
 type ApprovalRow = {
@@ -83,12 +89,17 @@ function mapSignal(row: SignalRow): Signal {
     author: row.author,
     content: row.content,
     url: row.url ?? undefined,
-    signalClass: row.signal_class,
+    category: row.category,
     confidence: row.confidence,
+    sentiment: (row.sentiment as Signal['sentiment']) ?? 'neutral',
+    priority: row.priority ?? 3,
+    riskLevel: (row.risk_level as Signal['riskLevel']) ?? 'low',
+    suggestedAction: (row.suggested_action as Signal['suggestedAction']) ?? 'monitor',
     alertLevel: row.alert_level,
     sourceAdapter: row.source_adapter,
     rawJson: row.raw_json ?? undefined,
     createdAt: row.created_at,
+    notifiedAt: row.notified_at ?? undefined,
   };
 }
 
@@ -109,8 +120,12 @@ export interface InsertSignalInput {
   author: string;
   content: string;
   url?: string;
-  signalClass: SignalClass;
+  category: SignalCategory;
   confidence: number;
+  sentiment?: string;
+  priority?: number;
+  riskLevel?: string;
+  suggestedAction?: string;
   alertLevel: AlertLevel;
   sourceAdapter: string;
   rawJson?: string;
@@ -121,13 +136,17 @@ export function insertSignal(input: InsertSignalInput): Signal {
   const result = db
     .prepare(
       `INSERT INTO signals
-        (tweet_id, author, content, url, signal_class, confidence, alert_level, source_adapter, raw_json)
+        (tweet_id, author, content, url, category, confidence, sentiment, priority, risk_level, suggested_action, alert_level, source_adapter, raw_json)
        VALUES
-        (@tweetId, @author, @content, @url, @signalClass, @confidence, @alertLevel, @sourceAdapter, @rawJson)`
+        (@tweetId, @author, @content, @url, @category, @confidence, @sentiment, @priority, @riskLevel, @suggestedAction, @alertLevel, @sourceAdapter, @rawJson)`
     )
     .run({
       ...input,
       url: input.url ?? null,
+      sentiment: input.sentiment ?? null,
+      priority: input.priority ?? null,
+      riskLevel: input.riskLevel ?? null,
+      suggestedAction: input.suggestedAction ?? null,
       rawJson: input.rawJson ?? null,
     });
 
@@ -158,6 +177,23 @@ export function getPendingSignals(limit = 10): Signal[] {
     .all(limit) as SignalRow[];
 
   return rows.map(mapSignal);
+}
+
+export function getUnnotifiedSignals(limit = 20): Signal[] {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `SELECT id, tweet_id, author, content, url, category, confidence, sentiment, priority, risk_level, suggested_action, alert_level, source_adapter, raw_json, created_at, notified_at
+       FROM signals WHERE notified_at IS NULL ORDER BY created_at ASC LIMIT ?`
+    )
+    .all(limit) as SignalRow[];
+
+  return rows.map(mapSignal);
+}
+
+export function markSignalNotified(signalId: number): void {
+  const db = getDb();
+  db.prepare('UPDATE signals SET notified_at = unixepoch() WHERE id = ?').run(signalId);
 }
 
 export interface RecordApprovalInput {

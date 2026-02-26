@@ -4,12 +4,17 @@ CREATE TABLE IF NOT EXISTS signals (
   author TEXT NOT NULL,
   content TEXT NOT NULL,
   url TEXT,
-  signal_class TEXT NOT NULL CHECK (signal_class IN ('reply_needed', 'watch_only', 'ignore')),
-  confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+  category INTEGER NOT NULL CHECK (category BETWEEN 1 AND 8),
+  confidence INTEGER NOT NULL CHECK (confidence BETWEEN 0 AND 100),
+  sentiment TEXT,
+  priority INTEGER,
+  risk_level TEXT,
+  suggested_action TEXT,
   alert_level TEXT NOT NULL CHECK (alert_level IN ('red', 'orange', 'yellow', 'none')),
   source_adapter TEXT NOT NULL,
   raw_json TEXT,
-  created_at INTEGER NOT NULL DEFAULT (unixepoch())
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  notified_at INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS approvals (
@@ -46,8 +51,9 @@ CREATE TABLE IF NOT EXISTS config_overrides (
 );
 
 CREATE INDEX IF NOT EXISTS idx_signals_alert_level ON signals(alert_level);
-CREATE INDEX IF NOT EXISTS idx_signals_signal_class ON signals(signal_class);
+CREATE INDEX IF NOT EXISTS idx_signals_category ON signals(category);
 CREATE INDEX IF NOT EXISTS idx_signals_created_at ON signals(created_at);
+CREATE INDEX IF NOT EXISTS idx_signals_priority ON signals(priority);
 
 CREATE INDEX IF NOT EXISTS idx_approvals_signal_id ON approvals(signal_id);
 CREATE INDEX IF NOT EXISTS idx_approvals_created_at ON approvals(created_at);
