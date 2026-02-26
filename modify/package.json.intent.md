@@ -1,19 +1,16 @@
-# package.json modification intent
+# Intent: package.json modifications
 
 ## What changed
-The `build` script needs a post-build step to sync compiled `.js` files from `dist/marketing-agent/` back to `marketing-agent/`.
+The `build` script now runs a cross-platform sync step after `tsc`: `node marketing-agent/scripts/sync-build-output.mjs`.
 
-## Why
-The marketing-agent `.ts` files use `.js` extension in imports (ESM convention). The cron collector runs via `npx tsx` which needs `.js` files present alongside `.ts` files. Without syncing, editing a `.ts` file and running `npm run build` leaves stale `.js` files in `marketing-agent/`, causing the Discord bot to use outdated code.
+## Key sections
+- `scripts.build`: changed from `tsc` to `tsc && node marketing-agent/scripts/sync-build-output.mjs`
 
-## How to merge
-Change the `build` script in `package.json` from:
-```json
-"build": "tsc"
-```
-to:
-```json
-"build": "tsc && cd dist/marketing-agent && find . \\( -name '*.js' -o -name '*.js.map' -o -name '*.d.ts' -o -name '*.d.ts.map' \\) -exec cp --parents {} ../../marketing-agent/ \\;"
-```
+## Invariants
+- All non-`build` scripts are preserved exactly
+- Dependencies and devDependencies remain unchanged
+- Node engine constraint remains unchanged
 
-Only the `build` script changes. All other fields remain untouched.
+## Must-keep
+- The sync script runs after `tsc` in the same `build` command
+- No other `package.json` fields are modified unless required by core changes

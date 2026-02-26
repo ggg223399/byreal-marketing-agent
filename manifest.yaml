@@ -25,6 +25,7 @@ adds:
   - marketing-agent/prompts/classification.md
   - marketing-agent/scripts/run-collector.sh
   - marketing-agent/scripts/collect-on-demand.sh
+  - marketing-agent/scripts/sync-build-output.mjs
   - marketing-agent/tests/adapter.test.ts
   - marketing-agent/tests/classifier.test.ts
   - marketing-agent/tests/config.test.ts
