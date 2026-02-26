@@ -1,6 +1,9 @@
 #!/bin/bash
 # Collector runner for cron — sets up environment properly
 # PROJECT_DIR is auto-detected from script location (scripts/ → marketing-agent/ → NanoClaw root)
+#
+# Cron should run every minute:  * * * * * /path/to/run-collector.sh
+# Actual collection interval is controlled by polling_interval_minutes in config.yaml
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -17,6 +20,25 @@ cd "$PROJECT_DIR"
 set -a
 source .env
 set +a
+
+# Read polling_interval_minutes from config.yaml (default 5)
+INTERVAL=$(grep 'polling_interval_minutes' config.yaml 2>/dev/null | head -1 | sed 's/.*: *//' | tr -d ' ')
+INTERVAL=${INTERVAL:-5}
+
+# Check last run timestamp to respect polling interval
+LOCK_FILE="/tmp/nanoclaw-collector-last-run"
+NOW=$(date +%s)
+if [ -f "$LOCK_FILE" ]; then
+  LAST_RUN=$(cat "$LOCK_FILE")
+  ELAPSED=$(( NOW - LAST_RUN ))
+  INTERVAL_SECS=$(( INTERVAL * 60 ))
+  if [ "$ELAPSED" -lt "$INTERVAL_SECS" ]; then
+    exit 0
+  fi
+fi
+
+# Record this run
+echo "$NOW" > "$LOCK_FILE"
 
 mkdir -p logs
 
