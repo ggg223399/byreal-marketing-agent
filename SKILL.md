@@ -376,6 +376,14 @@ systemctl --user restart nanoclaw
 | `mock` | 无 | 本地开发测试 |
 | `twitterapi_io` | `X-API-Key` | 初期上线，按量付费 |
 | `twitter_v2` | Bearer Token | 官方 API，高配额需求 |
+| `xai_search` | xAI API Key (`xai-...`) | xAI Grok + X Search，通过 AI 搜索 X 平台推文 |
+
+切换到 `xai_search`：
+1. 在 [xAI Console](https://console.x.ai) 获取 API Key
+2. 在 `.env` 设置 `DATA_SOURCE_API_KEY=<your-xai-api-key>`
+3. 在 `config.yaml` 设置 `data_source.type: xai_search`
+
+> **注意**：xai_search 使用 Grok 模型 + X Search 工具获取推文，费用按 xAI API token 计费。每次采集发送 2-3 次 API 调用（账号查询 + 关键词查询）。
 
 切换到 `twitter_v2`：
 1. 在 [Twitter Developer Portal](https://developer.twitter.com/) 申请 Basic 或以上套餐

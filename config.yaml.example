@@ -5,8 +5,9 @@ data_source:
   #   mock         — 本地测试用假数据，无需 API Key
   #   twitterapi_io — 按量计费 $0.15/1K tweets，适合初期（https://twitterapi.io）
   #   twitter_v2   — 官方 Twitter API v2，Bearer Token，需要 Basic($100/月) 或以上套餐
+  #   xai_search   — 通过 xAI Grok + X Search 获取推文，使用 xAI API Key
   type: twitterapi_io
-  api_key: ""  # 通过 DATA_SOURCE_API_KEY 环境变量覆盖
+  api_key: ""  # 通过 DATA_SOURCE_API_KEY 环境变量覆盖（mock 无需填写，twitter_v2 用 Bearer Token，xai_search 用 xAI API Key）
   max_tweets_per_query: 5  # 每次查询最多返回 N 条（1-100），减少 API 用量
 
 monitoring:

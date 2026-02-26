@@ -5,6 +5,7 @@ import { MockAdapter } from './adapters/mock.js';
 import { TwitterApiIoAdapter } from './adapters/twitterapiio.js';
 import { TwitterV2Adapter } from './adapters/twitter-v2.js';
 import { XpozAdapter } from './adapters/xpoz.js';
+import { XaiSearchAdapter } from './adapters/xai-search.js';
 import { loadConfig } from '../config/loader.js';
 
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -15,6 +16,7 @@ function createAdapter(type: string): DataSourceAdapter {
     case 'twitterapi_io': return new TwitterApiIoAdapter();
     case 'twitter_v2': return new TwitterV2Adapter();
     case 'xpoz': return new XpozAdapter();
+    case 'xai_search': return new XaiSearchAdapter();
     default: throw new Error(`Unknown adapter type: ${type}`);
   }
 }
