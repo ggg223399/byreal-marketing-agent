@@ -46,8 +46,7 @@ structured:
     yaml: "^2.0.0"
   env_additions:
     - DATA_SOURCE_API_KEY
-depends:
-  - discord
+depends: []
 conflicts: []
 post_apply:
   - "npx tsx marketing-agent/db/migrate.ts"

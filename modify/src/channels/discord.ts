@@ -1,4 +1,6 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Client, EmbedBuilder, Events, GatewayIntentBits, Message, MessageActionRowComponentBuilder, ModalBuilder, TextChannel, TextInputBuilder, TextInputStyle } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Client, EmbedBuilder, Events, GatewayIntentBits, Message, MessageActionRowComponentBuilder, TextChannel, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, AnyThreadChannel } from 'discord.js';
+import * as fs from 'fs';
+import { resolve } from 'path';
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { logger } from '../logger.js';
 import { Channel, OnChatMetadata, OnInboundMessage, RegisteredGroup } from '../types.js';
@@ -10,8 +12,24 @@ export interface DiscordChannelOpts {
   draftChannel?: string;
 }
 
-type DraftTone = 'helpful_expert' | 'friendly_peer' | 'humble_ack' | 'direct_rebuttal';
-type DraftSignal = { id: number; author: string; content: string; category: number; confidence: number };
+type ToneConfig = { id: string; label: string; emoji: string; description: string };
+
+type DraftSignal = {
+  id: number;
+  author: string;
+  content: string;
+  url?: string;
+  imageUrl?: string;
+  image_url?: string;
+  image?: string;
+  category: number;
+  confidence: number;
+  sentiment?: 'positive' | 'negative' | 'neutral';
+  riskLevel?: string;
+  alertLevel?: string;
+  suggestedAction?: string;
+  created_at?: string;
+};
 type SignalCategories = Record<number, string>;
 
 const SIGNAL_CATEGORIES: SignalCategories = {
@@ -25,60 +43,74 @@ const SIGNAL_CATEGORIES: SignalCategories = {
   8: '⚠️ risk_event',
 };
 
-const TONE_DISPLAY: Record<DraftTone, string> = {
-  helpful_expert: '🧑‍💼 Helpful Expert',
-  friendly_peer: '👋 Friendly Peer',
-  humble_ack: '🙏 Humble Ack',
-  direct_rebuttal: '💬 Direct Rebuttal',
-};
+const DEFAULT_TONES: ToneConfig[] = [
+  { id: 'helpful_expert', label: 'Helpful', emoji: '', description: '专业权威，提供具体价值' },
+  { id: 'friendly_peer', label: 'Friendly', emoji: '', description: '轻松对等，亲切友好' },
+  { id: 'humble_ack', label: 'Humble', emoji: '', description: '感恩致谢，不强推' },
+  { id: 'direct_rebuttal', label: 'Direct', emoji: '', description: '正面回应关切，建设性反驳' },
+];
 
-const CATEGORY_BUTTONS: Record<number, Array<{ tone: DraftTone; label: string }>> = {
-  1: [
+// Category-specific button labels — each signal category gets contextually relevant button text
+const CATEGORY_BUTTONS: Record<number, Array<{ tone: string; label: string }>> = {
+  1: [ // solana_growth_milestone
     { tone: 'friendly_peer', label: '🎉 Celebrate' },
     { tone: 'helpful_expert', label: '📊 Data Commentary' },
     { tone: 'humble_ack', label: '🚀 Amplify' },
   ],
-  2: [
+  2: [ // institutional_adoption
     { tone: 'helpful_expert', label: '🧑‍💼 Expert Analysis' },
     { tone: 'friendly_peer', label: '📊 Market Impact' },
     { tone: 'humble_ack', label: '🙏 Welcome Aboard' },
     { tone: 'direct_rebuttal', label: '💬 Our Position' },
   ],
-  3: [
+  3: [ // rwa_signal
     { tone: 'helpful_expert', label: '🧑‍💼 Expert Insight' },
     { tone: 'friendly_peer', label: '👋 Join Discussion' },
     { tone: 'humble_ack', label: '📊 Share Context' },
   ],
-  4: [
+  4: [ // liquidity_signal
     { tone: 'helpful_expert', label: '📊 Data Insight' },
     { tone: 'friendly_peer', label: '👋 Discuss' },
     { tone: 'humble_ack', label: '💧 Our Liquidity' },
     { tone: 'direct_rebuttal', label: '💬 Clarify' },
   ],
-  5: [
+  5: [ // market_structure_insight
     { tone: 'helpful_expert', label: '📊 Analysis' },
     { tone: 'friendly_peer', label: '👋 Join Chat' },
     { tone: 'direct_rebuttal', label: '🧠 Our View' },
     { tone: 'humble_ack', label: '🙏 Great Take' },
   ],
-  6: [
+  6: [ // byreal_ranking_mention
     { tone: 'humble_ack', label: '🙏 Thank You' },
     { tone: 'friendly_peer', label: '🎉 Celebrate' },
     { tone: 'helpful_expert', label: '📊 More Data' },
     { tone: 'direct_rebuttal', label: '💬 Add Context' },
   ],
-  7: [
+  7: [ // partner_momentum
     { tone: 'friendly_peer', label: '🤝 Collaborate' },
     { tone: 'humble_ack', label: '🙏 Appreciate' },
     { tone: 'helpful_expert', label: '📊 Synergy Data' },
   ],
-  8: [
+  8: [ // risk_event
     { tone: 'direct_rebuttal', label: '💬 Fact Check' },
     { tone: 'helpful_expert', label: '🧑‍💼 Expert Response' },
     { tone: 'humble_ack', label: '🙏 Acknowledge' },
     { tone: 'friendly_peer', label: '👋 Reassure' },
   ],
 };
+
+function formatToneLabel(tone: ToneConfig): string {
+  return (tone.label || tone.id || 'Tone').trim();
+}
+
+function getConfiguredTones(config: any): ToneConfig[] {
+  const tones = config?.tones;
+  if (Array.isArray(tones) && tones.length > 0) {
+    return tones as ToneConfig[];
+  }
+  return DEFAULT_TONES;
+}
+
 function titleCaseCategory(raw: string): string {
   return raw
     .split('_')
@@ -86,50 +118,164 @@ function titleCaseCategory(raw: string): string {
     .join(' ');
 }
 
-function buildToneButtonRow(signalId: number, category?: number) {
-  const buttons = category && CATEGORY_BUTTONS[category]
-    ? CATEGORY_BUTTONS[category]
-    : [
-        { tone: 'helpful_expert' as DraftTone, label: TONE_DISPLAY.helpful_expert },
-        { tone: 'friendly_peer' as DraftTone, label: TONE_DISPLAY.friendly_peer },
-        { tone: 'humble_ack' as DraftTone, label: TONE_DISPLAY.humble_ack },
-        { tone: 'direct_rebuttal' as DraftTone, label: TONE_DISPLAY.direct_rebuttal },
-      ];
+type SignalEmbedStyle = 'unified';
 
-  return new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(
-    ...buttons.map((btn, i) =>
-      new ButtonBuilder()
-        .setCustomId(`ma_tone:${btn.tone}:${signalId}`)
-        .setLabel(btn.label)
-        .setStyle(i === 0 ? ButtonStyle.Success : ButtonStyle.Primary)
-    ),
-    new ButtonBuilder()
-      .setCustomId(`ma_ctx:_:${signalId}`)
-      .setLabel('📝 Context')
-      .setStyle(ButtonStyle.Secondary),
-  );
+function getPriorityFromConfidence(confidence: number): string {
+  if (confidence >= 80) return 'P1';
+  if (confidence >= 50) return 'P2';
+  return 'P3';
 }
 
-function buildSignalSummaryEmbed(signal: DraftSignal, categories: SignalCategories): EmbedBuilder {
+function actionLabel(action?: string): string {
+  if (action === 'qrt_positioning') return '📢 Quote Tweet';
+  if (action === 'reply_supportive') return '💬 Reply · Supportive';
+  if (action === 'like_only') return '👍 Like Only';
+  if (action === 'monitor') return '👀 Monitor';
+  if (action === 'escalate_internal') return '🚨 Escalate · Internal';
+  return '—';
+}
+
+function buildSignalEmbed(signal: DraftSignal, categories: SignalCategories, _style: SignalEmbedStyle = 'unified'): EmbedBuilder {
   const category = categories[signal.category] ?? `unknown_${signal.category}`;
-  const categoryName = titleCaseCategory(category);
-  const content = signal.content.replace(/\s+/g, ' ').trim().slice(0, 220);
+  const rawCategory = category.includes(' ') ? category.split(' ').slice(1).join(' ') : category;
+  const categoryName = titleCaseCategory(rawCategory);
+  const content = signal.content.replace(/\s+/g, ' ').trim();
+  const imageUrl = signal.imageUrl || signal.image_url || signal.image;
+  const createdAt = signal.created_at ? new Date(signal.created_at) : new Date();
+  const authorName = signal.author.replace(/^@/, '');
 
-  return new EmbedBuilder()
-    .setColor(0x5865f2)
-    .setTitle(`📋 Signal #${signal.id} — ${categoryName}`)
-    .setDescription(`@${signal.author} · Confidence ${signal.confidence}%\n> ${content}\n\nSelect a tone to generate a draft reply.`)
-    .setFooter({ text: `#${signal.id}` });
+  const riskColors: Record<string, number> = { red: 0xf23f43, orange: 0xf0b232, yellow: 0xf0b232 };
+  const borderColor = riskColors[signal.alertLevel || 'none'] ?? 0x23a559;
+
+  const priority = getPriorityFromConfidence(signal.confidence ?? 0);
+  const score = signal.confidence ?? 0;
+  const risk = signal.riskLevel ? signal.riskLevel.charAt(0).toUpperCase() + signal.riskLevel.slice(1) : 'Low';
+  const sentimentLabel = signal.sentiment
+    ? signal.sentiment.charAt(0).toUpperCase() + signal.sentiment.slice(1)
+    : 'Neutral';
+
+  const separator = '----------------------------------------';
+  const description = signal.url
+    ? `${content}\n\n[View Tweet](${signal.url})\n\n${separator}`
+    : `${content}\n\n${separator}`;
+
+  const embed = new EmbedBuilder()
+    .setColor(borderColor)
+    .setTitle(`@${authorName} - ${categoryName}`)
+    .setURL(signal.url || null)
+    .setDescription(description)
+    .addFields(
+      { name: 'Priority · Confidence', value: `${priority} · ${score}`, inline: true },
+      { name: 'Risk · Sentiment', value: `${risk} · ${sentimentLabel}`, inline: true },
+      { name: 'Action', value: actionLabel(signal.suggestedAction), inline: true },
+    )
+    .setFooter({ text: `Signal #${signal.id}` })
+    .setTimestamp(createdAt);
+
+  if (imageUrl) {
+    embed.setImage(imageUrl);
+  }
+
+  return embed;
 }
 
-function buildDraftEmbed(signal: DraftSignal, tone: DraftTone, draftText: string): EmbedBuilder {
-  const originalContent = signal.content.replace(/\s+/g, ' ').trim().slice(0, 200);
-  return new EmbedBuilder()
-    .setColor(0x2ecc71)
-    .setTitle(`📝 Draft Reply — ${TONE_DISPLAY[tone]}`)
-    .setDescription(`**Original** (@${signal.author}):\n> ${originalContent}\n\n**Draft:**\n${draftText}\n\n💡 Copy and paste to Twitter`)
-    .setFooter({ text: `#${signal.id} · ${TONE_DISPLAY[tone]}` })
+function buildDraftReplyEmbed(signal: DraftSignal, toneLabel: string, draftText: string): EmbedBuilder {
+  const safeDraftText = draftText.replace(/```/g, "'''").trim();
+  const embed = new EmbedBuilder()
+    .setColor(0x1DA1F2)
+    .setAuthor({
+      name: `@${signal.author}`,
+      url: signal.url || undefined,
+    })
+    .setDescription(safeDraftText)
+    .setFooter({ text: `Draft Reply · ${toneLabel} · #${signal.id}` })
     .setTimestamp(new Date());
+
+  if (signal.url) {
+    embed.setURL(signal.url);
+  }
+
+  return embed;
+}
+
+function buildToneActionRow(tones: ToneConfig[], signalId: number, category?: number): ActionRowBuilder<MessageActionRowComponentBuilder> {
+  const row = new ActionRowBuilder<MessageActionRowComponentBuilder>();
+
+  // Use category-specific buttons if available, otherwise fall back to configured tones
+  const categoryButtons = category != null ? CATEGORY_BUTTONS[category] : undefined;
+
+  if (categoryButtons) {
+    categoryButtons.forEach((btn, i) => {
+      row.addComponents(
+        new ButtonBuilder()
+          .setCustomId(`ma_tone:${btn.tone}:${signalId}`)
+          .setLabel(btn.label)
+          .setStyle(i === 0 ? ButtonStyle.Success : ButtonStyle.Primary)
+      );
+    });
+  } else {
+    tones.forEach((tone, i) => {
+      row.addComponents(
+        new ButtonBuilder()
+          .setCustomId(`ma_tone:${tone.id}:${signalId}`)
+          .setLabel(formatToneLabel(tone))
+          .setStyle(i === 0 ? ButtonStyle.Success : ButtonStyle.Primary)
+      );
+    });
+  }
+
+  // Add Context button in same row
+  row.addComponents(
+    new ButtonBuilder()
+      .setCustomId(`ma_context:${signalId}`)
+      .setLabel('+Context')
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  return row;
+}
+
+function buildContextActionRow(signalId: number): ActionRowBuilder<MessageActionRowComponentBuilder> {
+  return new ActionRowBuilder<MessageActionRowComponentBuilder>()
+    .addComponents(
+      new ButtonBuilder()
+        .setCustomId(`ma_context:${signalId}`)
+        .setLabel('✨ Add Context')
+        .setStyle(ButtonStyle.Secondary)
+    );
+}
+
+function buildFeedbackSelectRow(signalId: number): ActionRowBuilder<MessageActionRowComponentBuilder> {
+  return new ActionRowBuilder<MessageActionRowComponentBuilder>()
+    .addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId(`ma_feedback:${signalId}`)
+        .setPlaceholder('📋 Signal Feedback')
+        .setMinValues(1)
+        .setMaxValues(1)
+        .addOptions(
+          new StringSelectMenuOptionBuilder().setLabel('❌ Not Relevant').setValue('not_relevant').setDescription('Signal is not relevant to Byreal'),
+          new StringSelectMenuOptionBuilder().setLabel('🔄 Wrong Category').setValue('wrong_category').setDescription('Signal is in the wrong category'),
+          new StringSelectMenuOptionBuilder().setLabel('📉 Low Quality').setValue('low_quality').setDescription('Signal is noise / low quality'),
+          new StringSelectMenuOptionBuilder().setLabel('🔁 Duplicate').setValue('duplicate').setDescription('Already seen this signal'),
+          new StringSelectMenuOptionBuilder().setLabel('✅ Good Signal').setValue('good_signal').setDescription('Correct classification, good signal'),
+        )
+    );
+}
+
+function buildProcessedSignalEmbed(original: EmbedBuilder, feedbackType: string, feedbackBy: string): EmbedBuilder {
+  const data = original.data;
+  const processedAt = data.timestamp ? new Date(data.timestamp) : new Date();
+  return new EmbedBuilder()
+    .setColor(0x95a5a6)
+    .setTitle(`[已反馈] ${data.title || 'Signal'}`)
+    .setDescription(data.description ?? null)
+    .setFields(
+      ...(data.fields || []),
+      { name: 'Feedback', value: `${feedbackType} by ${feedbackBy}`, inline: false }
+    )
+    .setFooter(data.footer ?? null)
+    .setTimestamp(processedAt);
 }
 
 export class DiscordChannel implements Channel {
@@ -137,6 +283,7 @@ export class DiscordChannel implements Channel {
   private client: Client | null = null;
   private opts: DiscordChannelOpts;
   private botToken: string;
+  private contextMap = new Map<string, { context: string; toneInput: string; timestamp: number }>();
 
   constructor(botToken: string, opts: DiscordChannelOpts) {
     this.botToken = botToken;
@@ -157,11 +304,17 @@ export class DiscordChannel implements Channel {
         return true;
       }
 
-      const row = buildToneButtonRow(signal.id, signal.category);
-      await (message.channel as TextChannel).send({
-        embeds: [buildSignalSummaryEmbed(signal, SIGNAL_CATEGORIES)],
-        components: [row],
-      });
+      const toneRow = buildToneActionRow(DEFAULT_TONES, signal.id, signal.category);
+      const feedbackRow = buildFeedbackSelectRow(signal.id);
+      const embedVariants = [buildSignalEmbed(signal, SIGNAL_CATEGORIES, 'unified')];
+
+      for (const embed of embedVariants) {
+        await (message.channel as TextChannel).send({
+          embeds: [embed],
+          components: [toneRow, feedbackRow],
+        });
+      }
+
 
       return true;
     } catch {
@@ -211,29 +364,20 @@ export class DiscordChannel implements Channel {
               continue;
             }
 
-            const payload = routerModule.formatSignalForDiscord(signal);
-            const embedData = payload.embeds[0];
-
-            const embed = new EmbedBuilder()
-              .setColor(embedData.color)
-              .setTitle(embedData.title)
-              .setDescription(embedData.description)
-              .setFields(embedData.fields)
-              .setFooter(embedData.footer)
-              .setTimestamp(new Date(embedData.timestamp));
+            const embed = buildSignalEmbed(signal, SIGNAL_CATEGORIES, 'unified');
 
             if (signal.url) {
               embed.setURL(signal.url);
             }
 
-            // Post to tier channel (no action buttons - info only)
-            await tierChannel.send({ embeds: [embed] });
+            // Post to tier channel with feedback button
+            const tierFeedbackRow = buildFeedbackSelectRow(signal.id);
+            await tierChannel.send({ embeds: [embed], components: [tierFeedbackRow] });
 
-            // If action channel exists, post with Generate Reply button (only for needs-reply)
+            // If action channel exists, post with tone buttons (needs-reply) or feedback only
             if (actionChannelName) {
               const actionChannel = findChannel(actionChannelName);
               if (actionChannel) {
-                // Only add tone buttons for needs-reply channel; needs-interaction is info-only
                 const needsReplyName = config.notifications?.needsReplyChannel ?? 'needs-reply';
                 const actionEmbed = EmbedBuilder.from(embed);
                 if (actionChannelName === needsReplyName) {
@@ -241,11 +385,13 @@ export class DiscordChannel implements Channel {
                 } else {
                   actionEmbed.setColor(0xE67E22);
                 }
+                const feedbackRow = buildFeedbackSelectRow(signal.id);
                 if (actionChannelName === needsReplyName) {
-                  const row = buildToneButtonRow(signal.id, signal.category);
-                  await actionChannel.send({ embeds: [actionEmbed], components: [row] });
+                  const tones = getConfiguredTones(config);
+                  const toneRow = buildToneActionRow(tones, signal.id, signal.category);
+                  await actionChannel.send({ embeds: [actionEmbed], components: [toneRow, feedbackRow] });
                 } else {
-                  await actionChannel.send({ embeds: [actionEmbed] });
+                  await actionChannel.send({ embeds: [actionEmbed], components: [feedbackRow] });
                 }
               }
             }
@@ -301,10 +447,10 @@ export class DiscordChannel implements Channel {
       if (!this.client || !this.client.isReady()) return;
 
       try {
-        const [dbModule, configModule, claudeModule] = await Promise.all([
+        const [dbModule, configModule, routerModule] = await Promise.all([
           import('../../marketing-agent/db/index.js') as Promise<any>,
           import('../../marketing-agent/config/loader.js') as Promise<any>,
-          import('../../marketing-agent/lib/claude-client.js') as Promise<any>,
+          import('../../marketing-agent/notifications/router.js') as Promise<any>,
         ]);
 
         const config = configModule.loadConfig();
@@ -338,50 +484,15 @@ export class DiscordChannel implements Channel {
           else tierCounts.none++;
         }
 
-        // Build signal digest for Claude to summarize
-        const signalLines = signals
-          .filter((s: any) => s.alertLevel !== 'none')
-          .slice(0, 40)
-          .map((s: any) => `[${s.alertLevel.toUpperCase()}] ${s.author}: ${s.content.slice(0, 150)}`)
-          .join('\n');
-
-        const systemPrompt = `You are a crypto market analyst writing a concise briefing for a team Discord channel. Write in Chinese. Be direct and insightful. No greetings or filler.`;
-        const userPrompt = `Summarize the following ${signals.length} Twitter signals from the last 12 hours into a market briefing. Focus on:
-1. Key trends and narratives (2-3 bullet points)
-2. Notable high-priority signals that need attention
-3. Risk events if any
-4. Actionable takeaways (1-2 sentences)
-
-Tier breakdown: 🔴 ${tierCounts.red} | 🟠 ${tierCounts.orange} | 🟡 ${tierCounts.yellow} | ⚪ ${tierCounts.none}
-
-Signals:
-${signalLines}
-
-Keep the entire summary under 1500 characters. Use bullet points and emoji for readability.`;
-
-        let summaryText: string;
-        try {
-          summaryText = await claudeModule.callClaudeText({
-            systemPrompt,
-            userPrompt,
-            model: config.classification?.model || 'claude-haiku-4-5',
-            temperature: 0.3,
-            maxTokens: 1024,
-          });
-        } catch (err) {
-          logger.warn({ err }, 'Failed to generate AI summary, falling back to counts');
-          summaryText = `共 ${signals.length} 条信号\n🔴 ${tierCounts.red} | 🟠 ${tierCounts.orange} | 🟡 ${tierCounts.yellow} | ⚪ ${tierCounts.none}`;
-        }
-
         const embed = new EmbedBuilder()
           .setColor(0x5865f2)
-          .setTitle('📊 Signal Summary — Last 12 Hours')
-          .setDescription(summaryText.slice(0, 4096))
+          .setTitle('📊 Signal Summary - Last 12 Hours')
+          .setDescription(`Total signals: ${signals.length}`)
           .addFields(
-            { name: 'Total', value: String(signals.length), inline: true },
             { name: '🔴 Tier 1', value: String(tierCounts.red), inline: true },
             { name: '🟠 Tier 2', value: String(tierCounts.orange), inline: true },
             { name: '🟡 Tier 3', value: String(tierCounts.yellow), inline: true },
+            { name: '⚪ Noise', value: String(tierCounts.none), inline: true },
           )
           .setTimestamp(new Date());
 
@@ -544,162 +655,299 @@ Keep the entire summary under 1500 characters. Use bullet points and emoji for r
     });
 
     this.client.on(Events.InteractionCreate, async (interaction: any) => {
-      // Handle modal submit (context + tone draft)
-      if (interaction.isModalSubmit() && interaction.customId.startsWith('ma_ctx_modal:')) {
-        await interaction.deferReply({ ephemeral: true });
-        try {
-          const parts = interaction.customId.split(':');
-          const signalIdStr = parts[1];
-          const userContext = interaction.fields.getTextInputValue('ma_ctx_input');
+      if (!(interaction.isButton() || interaction.isStringSelectMenu() || interaction.isModalSubmit())) return;
 
-          const [dbModule, genModule] = await Promise.all([
+      const customId = interaction.customId as string;
+      if (!customId.startsWith('ma_')) return;
+
+      const [action, a, b] = customId.split(':');
+
+      if (action === 'ma_tone' && interaction.isButton()) {
+        const toneId = a; // tone ID string (e.g. 'helpful_expert')
+        const signalId = Number(b);
+
+        if (!toneId || !Number.isFinite(signalId)) {
+          await interaction.reply({ content: '⚠️ Invalid action.', ephemeral: true }).catch(() => undefined);
+          return;
+        }
+
+        await interaction.deferUpdate();
+
+        try {
+          const [dbModule, genModule, configModule] = await Promise.all([
             import('../../marketing-agent/db/index.js') as Promise<any>,
             import('../../marketing-agent/generator/draft.js') as Promise<any>,
+            import('../../marketing-agent/config/loader.js') as Promise<any>,
           ]);
 
-          const signal: DraftSignal | null = dbModule.getSignalById(Number(signalIdStr));
+          const signal = dbModule.getSignalById(signalId);
+          if (!signal) {
+            await interaction.followUp({ content: '⚠️ Signal not found', ephemeral: true }).catch(() => undefined);
+            return;
+          }
+
+          const config = configModule.loadConfig();
+          const tones = getConfiguredTones(config);
+          // Find tone by ID, fall back to first tone
+          const tone = tones.find(t => t.id === toneId) || tones[0];
+          if (!tone) {
+            await interaction.followUp({ content: '⚠️ Invalid tone.', ephemeral: true }).catch(() => undefined);
+            return;
+          }
+
+          const contextKey = `${interaction.user.id}:${signalId}`;
+          const storedContext = this.contextMap.get(contextKey);
+          const context = storedContext?.context;
+          const toneLabel = formatToneLabel(tone);
+
+          const signalMessage = interaction.message;
+          let thread: AnyThreadChannel;
+          if (signalMessage.hasThread && signalMessage.thread) {
+            thread = signalMessage.thread;
+          } else {
+            thread = await signalMessage.startThread({
+              name: `Draft — Signal #${signalId}`,
+              autoArchiveDuration: 1440,
+            });
+          }
+
+          const loadingMsg = await thread.send(`⏳ Generating draft with ${toneLabel}...`);
+          const draftText = await genModule.generateSingleToneDraft(signal, tone.id, context);
+          const draftEmbed = buildDraftReplyEmbed(signal, toneLabel, draftText);
+          await loadingMsg.edit({ content: '', embeds: [draftEmbed] });
+
+          if (storedContext) {
+            this.contextMap.delete(contextKey);
+          }
+        } catch (err) {
+          logger.error({ err, signalId, toneId }, 'Tone handler failed');
+          await interaction.followUp({ content: '⚠️ Failed to generate draft.', ephemeral: true }).catch(() => undefined);
+        }
+        return;
+      }
+
+      if (action === 'ma_context' && interaction.isButton()) {
+        const signalId = Number(a);
+        if (!Number.isFinite(signalId)) {
+          await interaction.reply({ content: '⚠️ Invalid signal id.', ephemeral: true }).catch(() => undefined);
+          return;
+        }
+
+        try {
+          const configModule: any = await import('../../marketing-agent/config/loader.js');
+          const config = configModule.loadConfig();
+          const tones = getConfiguredTones(config);
+
+          const modal = new ModalBuilder()
+            .setCustomId(`ma_ctx_submit:${signalId}`)
+            .setTitle(`Custom Context for Signal #${signalId}`);
+
+          const toneInput = new TextInputBuilder()
+            .setCustomId('tone_input')
+            .setLabel('Tone (optional)')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder(tones.slice(0, 3).map((t) => t.label).join(' / '))
+            .setRequired(false);
+
+          const contextInput = new TextInputBuilder()
+            .setCustomId('context_input')
+            .setLabel('Additional Context')
+            .setStyle(TextInputStyle.Paragraph)
+            .setPlaceholder('Any additional context for the AI when generating the reply...')
+            .setRequired(true);
+
+          modal.addComponents(
+            new ActionRowBuilder<TextInputBuilder>().addComponents(toneInput),
+            new ActionRowBuilder<TextInputBuilder>().addComponents(contextInput),
+          );
+
+          await interaction.showModal(modal);
+        } catch (err) {
+          logger.error({ err, signalId }, 'Context modal failed');
+          await interaction.reply({ content: '⚠️ Failed to open modal.', ephemeral: true }).catch(() => undefined);
+        }
+        return;
+      }
+
+      if (action === 'ma_feedback' && interaction.isStringSelectMenu()) {
+        const signalId = Number(a);
+        const feedbackValue = interaction.values?.[0];
+
+        if (!Number.isFinite(signalId) || !feedbackValue) {
+          await interaction.reply({ content: '⚠️ Invalid feedback.', ephemeral: true }).catch(() => undefined);
+          return;
+        }
+
+        await interaction.deferUpdate();
+
+        try {
+          const [dbModule] = await Promise.all([
+            import('../../marketing-agent/db/index.js') as Promise<any>,
+          ]);
+
+          const signal = dbModule.getSignalById(signalId);
+          if (!signal) {
+            await interaction.followUp({ content: '⚠️ Signal not found', ephemeral: true }).catch(() => undefined);
+            return;
+          }
+
+          const feedbackLabels: Record<string, string> = {
+            not_relevant: '❌ Not Relevant',
+            wrong_category: '🔄 Wrong Category',
+            low_quality: '📉 Low Quality',
+            duplicate: '🔁 Duplicate',
+            good_signal: '✅ Good Signal',
+          };
+          const feedbackLabel = feedbackLabels[feedbackValue] || feedbackValue;
+
+          const classificationPath = resolve(process.cwd(), 'marketing-agent/prompts/classification.md');
+          try {
+            let content = fs.readFileSync(classificationPath, 'utf-8');
+            const timestamp = new Date().toISOString();
+            const userName = interaction.member?.displayName || interaction.user.globalName || interaction.user.username;
+
+            if (!content.includes('## Learned Corrections')) {
+              content += '\n\n## Learned Corrections\n';
+            }
+
+            const snippet = signal.content.length > 100 ? `${signal.content.slice(0, 100)}...` : signal.content;
+            const correction = `\n- Signal #${signalId} (category ${signal.category}): Feedback "${feedbackLabel}" by ${userName} at ${timestamp}\n  Content: "${snippet}"`;
+            content += correction;
+
+            const entries = content.match(/\n- Signal #\d+/g) || [];
+            if (entries.length > 50) {
+              const lines = content.split('\n');
+              const headerIndex = lines.findIndex((line) => line.trim() === '## Learned Corrections');
+              if (headerIndex >= 0) {
+                const before = lines.slice(0, headerIndex + 1);
+                const block = lines.slice(headerIndex + 1);
+
+                const grouped: string[] = [];
+                let current: string[] = [];
+                for (const line of block) {
+                  if (line.startsWith('- Signal #')) {
+                    if (current.length > 0) grouped.push(current.join('\n'));
+                    current = [line];
+                  } else if (current.length > 0) {
+                    current.push(line);
+                  }
+                }
+                if (current.length > 0) grouped.push(current.join('\n'));
+
+                const kept = grouped.slice(-50);
+                content = [...before, '', ...kept.flatMap((entry) => entry.split('\n'))].join('\n');
+              }
+            }
+
+            fs.writeFileSync(classificationPath, content, 'utf-8');
+          } catch (fileErr) {
+            logger.warn({ err: fileErr }, 'Failed to update classification.md');
+          }
+
+          const signalMessage = interaction.message;
+          const existingEmbed = signalMessage?.embeds?.[0];
+          if (signalMessage && existingEmbed) {
+            const feedbackBy = interaction.member?.displayName || interaction.user.globalName || interaction.user.username;
+            const processedEmbed = buildProcessedSignalEmbed(
+              EmbedBuilder.from(existingEmbed),
+              feedbackLabel,
+              feedbackBy,
+            );
+            await signalMessage.edit({ embeds: [processedEmbed], components: [] });
+
+            let thread: AnyThreadChannel;
+            if (signalMessage.hasThread && signalMessage.thread) {
+              thread = signalMessage.thread;
+            } else {
+              thread = await signalMessage.startThread({
+                name: `Feedback — Signal #${signalId}`,
+                autoArchiveDuration: 1440,
+              });
+            }
+            await thread.send(`📋 Feedback recorded: ${feedbackLabel}`);
+          }
+        } catch (err) {
+          logger.error({ err, signalId, feedbackValue }, 'Feedback handler failed');
+          await interaction.followUp({ content: '⚠️ Failed to process feedback.', ephemeral: true }).catch(() => undefined);
+        }
+        return;
+      }
+
+      if (action === 'ma_ctx_submit' && interaction.isModalSubmit()) {
+        const signalId = Number(a);
+        const toneInput = interaction.fields.getTextInputValue('tone_input');
+        const contextInput = interaction.fields.getTextInputValue('context_input');
+
+        if (!Number.isFinite(signalId)) {
+          await interaction.reply({ content: '⚠️ Invalid signal id.', ephemeral: true }).catch(() => undefined);
+          return;
+        }
+
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+          const [dbModule, genModule, configModule] = await Promise.all([
+            import('../../marketing-agent/db/index.js') as Promise<any>,
+            import('../../marketing-agent/generator/draft.js') as Promise<any>,
+            import('../../marketing-agent/config/loader.js') as Promise<any>,
+          ]);
+
+          const signal = dbModule.getSignalById(signalId);
           if (!signal) {
             await interaction.editReply({ content: '⚠️ Signal not found' });
             return;
           }
 
-          // Generate draft with user context appended to signal content
-          const augmentedSignal = { ...signal, content: `${signal.content}\n\n[Additional context from reviewer]: ${userContext}` };
-          const draftText: string = await genModule.generateSingleToneDraft(augmentedSignal, 'helpful_expert');
+          const config = configModule.loadConfig();
+          const tones = getConfiguredTones(config);
 
-          const draftChannelName = this.opts.draftChannel ?? 'draft';
-          const draftChannel = this.client!.channels.cache.find(
-            (ch: any) => ch.type === 0 && ch.name === draftChannelName
-          );
-
-          const embed = buildDraftEmbed(signal, 'helpful_expert', draftText)
-            .addFields({ name: '📝 Context', value: userContext.slice(0, 200) });
-          const deleteBtn = new ButtonBuilder()
-            .setCustomId('ma_delete_draft')
-            .setLabel('🗑️ Delete')
-            .setStyle(ButtonStyle.Danger);
-          const row = new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(
-            ...(buildToneButtonRow(signal.id, signal.category).components as any[]),
-            deleteBtn as any,
-          );
-
-          if (draftChannel && 'send' in draftChannel) {
-            await (draftChannel as any).send({ embeds: [embed], components: [row] });
-            await interaction.editReply({ content: `✅ Draft with context sent to #${draftChannelName}` });
-          } else {
-            await interaction.editReply({ content: draftText });
-          }
-        } catch (err) {
-          logger.error({ err }, 'Context modal handler failed');
-          await interaction.editReply({ content: '⚠️ Failed to generate draft.' }).catch(() => undefined);
-        }
-        return;
-      }
-
-      if (!interaction.isButton()) return;
-
-      const customId = interaction.customId;
-      if (!customId.startsWith('ma_')) return;
-
-      // Handle delete draft button
-      if (interaction.customId === 'ma_delete_draft') {
-        try {
-          await interaction.message.delete();
-        } catch (err) {
-          logger.error({ err }, 'Failed to delete draft message');
-          await interaction.reply({ content: '⚠️ Could not delete message.', ephemeral: true });
-        }
-        return;
-      }
-
-      // Handle context button — show modal
-      if (customId.startsWith('ma_ctx:')) {
-        const signalIdStr = customId.split(':')[2];
-        const modal = new ModalBuilder()
-          .setCustomId(`ma_ctx_modal:${signalIdStr}`)
-          .setTitle('Add Context for Draft');
-        const contextInput = new TextInputBuilder()
-          .setCustomId('ma_ctx_input')
-          .setLabel('Additional context or instructions')
-          .setPlaceholder('e.g. mention our new partnership, keep it under 200 chars...')
-          .setStyle(TextInputStyle.Paragraph)
-          .setRequired(true)
-          .setMaxLength(500);
-        modal.addComponents(new ActionRowBuilder<any>().addComponents(contextInput));
-        await interaction.showModal(modal);
-        return;
-      }
-
-      const [action, tone, signalIdStr] = customId.split(':');
-
-      if (action === 'ma_tone' || action === 'ma_refresh') {
-        await interaction.deferUpdate();
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const [dbModule, genModule] = await Promise.all([
-            import('../../marketing-agent/db/index.js') as Promise<any>,
-            import('../../marketing-agent/generator/draft.js') as Promise<any>,
-          ]);
-
-          if (!tone || !signalIdStr) {
-            await interaction.editReply({ content: '⚠️ Invalid tone action.', components: [] });
-            return;
-          }
-
-          const selectedTone = tone as DraftTone;
-          if (!(selectedTone in TONE_DISPLAY)) {
-            await interaction.editReply({ content: '⚠️ Unsupported tone.', components: [] });
-            return;
-          }
-
-          const signal: DraftSignal | null = dbModule.getSignalById(Number(signalIdStr));
-          if (!signal) {
-            await interaction.editReply({ content: '⚠️ Signal not found', components: [] });
-            return;
-          }
-
-          const draftText: string = await genModule.generateSingleToneDraft(signal, selectedTone);
-          const row = buildToneButtonRow(signal.id, signal.category);
-
-          // Find the draft channel
-          const draftChannelName = this.opts.draftChannel ?? 'draft';
-          const draftChannel = this.client!.channels.cache.find(
-            (ch: any) => ch.type === 0 && ch.name === draftChannelName
-          );
-          if (draftChannel && 'send' in draftChannel) {
-            // Add delete button alongside the tone buttons
-            const deleteBtn = new ButtonBuilder()
-              .setCustomId(`ma_delete_draft`)
-              .setLabel('🗑️ Delete')
-              .setStyle(ButtonStyle.Danger);
-            const actionRow = new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(
-              ...(buildToneButtonRow(signal.id, signal.category).components as any[]),
-              deleteBtn as any,
+          let toneIndex = 0;
+          if (toneInput) {
+            const found = tones.findIndex(
+              (t) =>
+                t.label.toLowerCase().includes(toneInput.toLowerCase())
+                || t.id.toLowerCase().includes(toneInput.toLowerCase()),
             );
-            await (draftChannel as any).send({
-              embeds: [buildDraftEmbed(signal, selectedTone, draftText)],
-              components: [actionRow],
-            });
-            await interaction.editReply({ content: `✅ Draft sent to #${draftChannelName}`, components: [] });
-          } else {
-            // Fallback: reply in place if draft channel not found
-            await interaction.message.reply({
-              embeds: [buildDraftEmbed(signal, selectedTone, draftText)],
-              components: [row],
-            });
-            await interaction.editReply({ content: '✅ Draft generated above ⬆️', components: [] });
+            if (found >= 0) toneIndex = found;
           }
+          const tone = tones[toneIndex];
+          const toneLabel = formatToneLabel(tone);
+
+          const contextKey = `${interaction.user.id}:${signalId}`;
+          this.contextMap.set(contextKey, { context: contextInput, toneInput, timestamp: Date.now() });
+
+          const signalMessage = interaction.message;
+          if (!signalMessage) {
+            await interaction.editReply({ content: '⚠️ Missing source message.' });
+            return;
+          }
+
+          let thread: AnyThreadChannel;
+          if (signalMessage.hasThread && signalMessage.thread) {
+            thread = signalMessage.thread;
+          } else {
+            thread = await signalMessage.startThread({
+              name: `Draft — Signal #${signalId}`,
+              autoArchiveDuration: 1440,
+            });
+          }
+
+          const loadingMsg = await thread.send('⏳ Generating draft with context...');
+          const draftText = await genModule.generateSingleToneDraft(signal, tone.id, contextInput);
+          const draftEmbed = buildDraftReplyEmbed(signal, toneLabel, draftText);
+          await loadingMsg.edit({ content: '', embeds: [draftEmbed] });
+
+          await interaction.deleteReply().catch(() => undefined);
         } catch (err) {
-          logger.error({ err, signalIdStr, tone }, 'Draft tone button handler failed');
-          await interaction.editReply({
-            content: '⚠️ Failed to generate draft. Check logs.',
-            components: [],
-          }).catch(() => undefined);
+          logger.error({ err, signalId }, 'Context submit handler failed');
+          await interaction.editReply({ content: '⚠️ Failed to generate draft.' });
         }
+        return;
       }
     });
 
-    return new Promise<void>((resolve, reject) => {
+
+    return new Promise<void>((resolve) => {
       this.client!.once(Events.ClientReady, (readyClient: any) => {
         logger.info(
           { username: readyClient.user.tag, id: readyClient.user.id },
@@ -711,12 +959,18 @@ Keep the entire summary under 1500 characters. Use bullet points and emoji for r
         );
         this.startSignalPolling();
         this.startSummaryScheduler();
+        setInterval(() => {
+          const now = Date.now();
+          for (const [key, value] of this.contextMap.entries()) {
+            if (now - value.timestamp > 30 * 60 * 1000) {
+              this.contextMap.delete(key);
+            }
+          }
+        }, 10 * 60 * 1000);
         resolve();
       });
 
-      this.client!.login(this.botToken).catch((err: Error) => {
-        reject(err);
-      });
+      this.client!.login(this.botToken);
     });
   }
 
