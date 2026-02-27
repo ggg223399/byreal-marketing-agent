@@ -1,6 +1,6 @@
 import { callClaudeText } from '../lib/claude-client.js';
 import { SIGNAL_CATEGORIES } from '../types/index.js';
-import type { DraftReply, DraftTone, DraftVariant, Signal, SignalCategory } from '../types/index.js';
+import type { DraftTone, Signal } from '../types/index.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -49,22 +49,6 @@ function loadBrandContext(brandContextPath?: string): string {
   }
 }
 
-const RECOMMENDED_TONES: Record<SignalCategory, [DraftTone, DraftTone]> = {
-  0: ['friendly_peer', 'humble_ack'],
-  1: ['helpful_expert', 'friendly_peer'],
-  2: ['helpful_expert', 'friendly_peer'],
-  3: ['helpful_expert', 'friendly_peer'],
-  4: ['helpful_expert', 'friendly_peer'],
-  5: ['helpful_expert', 'friendly_peer'],
-  6: ['humble_ack', 'direct_rebuttal'],
-  7: ['friendly_peer', 'humble_ack'],
-  8: ['direct_rebuttal', 'helpful_expert'],
-};
-
-export function getRecommendedTones(category: SignalCategory): [DraftTone, DraftTone] {
-  return RECOMMENDED_TONES[category];
-}
-
 function extractJsonObject(raw: string): string {
   const trimmed = raw.trim();
   if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
@@ -78,34 +62,6 @@ function extractJsonObject(raw: string): string {
   }
 
   return trimmed.slice(start, end + 1);
-}
-
-function parseVariants(raw: string): DraftVariant[] {
-  const parsed = JSON.parse(extractJsonObject(raw)) as Record<string, unknown>;
-  const helpfulExpert = parsed.helpful_expert;
-  const friendlyPeer = parsed.friendly_peer;
-  const humbleAck = parsed.humble_ack;
-  const directRebuttal = parsed.direct_rebuttal;
-
-  if (typeof helpfulExpert !== 'string' || !helpfulExpert.trim()) {
-    throw new Error('Missing helpful_expert draft');
-  }
-  if (typeof friendlyPeer !== 'string' || !friendlyPeer.trim()) {
-    throw new Error('Missing friendly_peer draft');
-  }
-  if (typeof humbleAck !== 'string' || !humbleAck.trim()) {
-    throw new Error('Missing humble_ack draft');
-  }
-  if (typeof directRebuttal !== 'string' || !directRebuttal.trim()) {
-    throw new Error('Missing direct_rebuttal draft');
-  }
-
-  return [
-    { tone: 'helpful_expert', text: helpfulExpert.trim() },
-    { tone: 'friendly_peer', text: friendlyPeer.trim() },
-    { tone: 'humble_ack', text: humbleAck.trim() },
-    { tone: 'direct_rebuttal', text: directRebuttal.trim() },
-  ];
 }
 
 function buildSystemPrompt(brandContextPath?: string): string {
@@ -122,28 +78,36 @@ function buildSystemPrompt(brandContextPath?: string): string {
     'Do not overpromise. Do not mention private or unverifiable facts.',
     'Return strict JSON only.',
     '',
-    'Tone guide:',
-    '- helpful_expert: Professional, authoritative, offers concrete value and expertise.',
-    '- friendly_peer: Casual, relatable, peer-to-peer energy, approachable and warm.',
-    '- humble_ack: Grateful, appreciative, acknowledges without being pushy.',
-    '- direct_rebuttal: Addresses concerns constructively, empathetic but clear.'
+    'Strategy guide (generate reply matching the strategy):',
+    '- thank_support: Warmly thank and acknowledge. Show genuine appreciation.',
+    '- add_detail: Add specific product features, data points, or context about Byreal.',
+    '- invite_try: Friendly invitation to try specific Byreal features. Include concrete value prop.',
+    '- data_compare: Present objective data comparison. Use numbers and facts.',
+    '- differentiate: Highlight what makes Byreal unique. Concrete advantages over alternatives.',
+    '- objective_take: Professional, balanced analysis. Acknowledge strengths of others too.',
+    '- share_insight: Share a valuable market insight or perspective. Be informative.',
+    '- offer_solution: Propose a practical solution or approach. Be actionable.',
+    '- show_interest: Express genuine interest and engagement. Ask smart follow-up questions.',
+    '- add_data: Supplement with relevant data points. Be precise.',
+    '- trend_analysis: Interpret trends and their implications. Forward-looking.',
+    '- team_perspective: Share team viewpoint. Authentic insider perspective.',
+    '- positive_engage: Enthusiastic, positive engagement. Celebrate the news/development.',
+    '- collab_intent: Express collaboration interest. Be specific about potential synergies.',
+    '- share_progress: Share Byreal related progress. Concrete updates.',
+    '- industry_insight: Deep industry knowledge. Thought leadership.',
+    '- tech_vision: Technical perspective on the topic. Expert-level.',
+    '- express_interest: Express strategic interest. Show Byreal is paying attention.',
+    '- expert_analysis: Professional expert analysis. Authoritative.',
+    '- compliance_view: Compliance/regulatory angle. Thoughtful and measured.',
+    '- market_view: Market perspective. Data-informed opinion.',
+    '- safety_alert: Safety awareness. Responsible, helpful, not alarmist.',
+    '- fact_clarify: Clarify facts objectively. Evidence-based.',
+    '- official_response: Official Byreal response. Measured, authoritative, transparent.',
   );
   
   return parts.join('\n');
 }
 
-
-function buildUserPrompt(signal: Signal): string {
-  const categoryName = SIGNAL_CATEGORIES[signal.category] ?? 'unknown_category';
-  return [
-    'Generate exactly four reply variants for this tweet.',
-    `Author: ${signal.author}`,
-    `Category: ${signal.category} (${categoryName})`,
-    `Tweet: ${signal.content}`,
-    'Output JSON object with keys:',
-    '{"helpful_expert":"...","friendly_peer":"...","humble_ack":"...","direct_rebuttal":"..."}',
-  ].join('\n');
-}
 
 function parseSingleToneText(raw: string): string {
   const trimmed = raw.trim();
@@ -163,17 +127,23 @@ function parseSingleToneText(raw: string): string {
   return trimmed;
 }
 
-function fallbackSingleToneDraft(signal: Signal, tone: DraftTone): string {
-  if (tone === 'helpful_expert') {
-    return `Byreal is built for this use case, @${signal.author} - tighter execution, clearer market context, and practical risk controls for active DeFi traders.`;
-  }
-  if (tone === 'friendly_peer') {
-    return `Great call, @${signal.author} - Byreal has been a smooth setup for tracking positions and reacting faster. Happy to share what is working.`;
-  }
-  if (tone === 'humble_ack') {
-    return `Appreciate it, @${signal.author}! Thanks for the mention - let us know if there is anything you'd like us to improve.`;
-  }
-  return `Fair point, @${signal.author}. We are actively improving reliability and transparency - if you share the exact pain point, we can address it directly.`;
+function fallbackSingleToneDraft(signal: Signal, strategy: string): string {
+  const author = signal.author;
+  const strategyFallbacks: Record<string, string> = {
+    thank_support: `Thanks for the mention, @${author}! We really appreciate the support. Let us know if there's anything we can help with.`,
+    add_detail: `@${author} Great point! Byreal's concentrated liquidity pools offer tighter spreads and better capital efficiency for active LPs.`,
+    invite_try: `@${author} You should check out Byreal's Real Farmer feature - social copy-LP that makes DeFi accessible. Would love your feedback!`,
+    data_compare: `Interesting data, @${author}. On Byreal we're seeing strong LP returns with concentrated liquidity - happy to share specifics.`,
+    differentiate: `@${author} What sets Byreal apart: CLMM with social copy-LP, Bybit Alpha integration, and optimized new asset launches on Solana.`,
+    objective_take: `Good analysis, @${author}. The landscape is evolving fast - Byreal's approach focuses on capital efficiency and LP experience.`,
+    share_insight: `@${author} Our take: this signals growing demand for efficient liquidity solutions on Solana. Exciting times ahead.`,
+    offer_solution: `@${author} Byreal can help here - our CLMM pools are designed exactly for this use case. Happy to walk you through it.`,
+    show_interest: `Really interesting development, @${author}. We're watching this closely at Byreal. What's your take on the next steps?`,
+    safety_alert: `@${author} Important reminder to stay vigilant. Always verify contract addresses and use trusted platforms.`,
+    fact_clarify: `@${author} To clarify the facts here - happy to provide specific data points from Byreal's side.`,
+    official_response: `@${author} Thanks for raising this. Here's Byreal's position: we prioritize transparency and user safety above all.`,
+  };
+  return strategyFallbacks[strategy] || `Thanks for sharing, @${author}. Interesting perspective - the Byreal team is paying attention.`;
 }
 
 function buildSingleToneUserPrompt(signal: Signal, tone: DraftTone, context?: string): string {
@@ -182,7 +152,7 @@ function buildSingleToneUserPrompt(signal: Signal, tone: DraftTone, context?: st
   return [
     'Generate exactly one reply variant for this tweet.',
     contextSection,
-    `Required tone: ${tone}`,
+    `Required strategy: ${tone}`,
     `Author: ${signal.author}`,
     `Category: ${signal.category} (${categoryName})`,
     `Tweet: ${signal.content}`,
@@ -194,11 +164,9 @@ function buildSingleToneUserPrompt(signal: Signal, tone: DraftTone, context?: st
 export async function generateSingleToneDraft(signal: Signal, tone: DraftTone, context?: string): Promise<string> {
   const mocked = process.env.MOCK_DRAFT_RESPONSE;
   if (mocked) {
-    const variants = parseVariants(mocked);
-    const match = variants.find((item) => item.tone === tone);
-    if (match?.text) {
-      return match.text;
-    }
+    const parsed = JSON.parse(extractJsonObject(mocked)) as Record<string, unknown>;
+    const mockText = parsed[tone];
+    if (typeof mockText === 'string' && mockText.trim()) return mockText.trim();
   }
 
   if (!readSecret('CLAUDE_CODE_OAUTH_TOKEN') && !readSecret('ANTHROPIC_API_KEY')) {
@@ -230,74 +198,5 @@ export async function generateSingleToneDraft(signal: Signal, tone: DraftTone, c
       maxTokens: 400,
     });
     return parseSingleToneText(retryRaw);
-  }
-}
-
-export async function generateDraft(signal: Signal): Promise<DraftReply> {
-  const mocked = process.env.MOCK_DRAFT_RESPONSE;
-  if (mocked) {
-    return {
-      signalId: signal.id,
-      variants: parseVariants(mocked),
-      generatedAt: Math.floor(Date.now() / 1000),
-    };
-  }
-
-  if (!readSecret('CLAUDE_CODE_OAUTH_TOKEN') && !readSecret('ANTHROPIC_API_KEY')) {
-    return {
-      signalId: signal.id,
-      variants: [
-        {
-          tone: 'helpful_expert',
-          text: `Byreal offers exactly what you need, ${signal.author}. Built for serious DeFi participants with real-time analytics and liquidity optimization.`,
-        },
-        {
-          tone: 'friendly_peer',
-          text: `Hey ${signal.author}! Using Byreal here — it's been solid for managing positions. Happy to share more!`,
-        },
-        {
-          tone: 'humble_ack',
-          text: `Thanks for the mention, ${signal.author}! Really appreciate it. Let us know if there's anything we can help with.`,
-        },
-        {
-          tone: 'direct_rebuttal',
-          text: `We hear you, ${signal.author}. Here's what Byreal does differently: [feature]. Happy to address any specific concerns!`,
-        },
-      ],
-      generatedAt: Math.floor(Date.now() / 1000),
-    };
-  }
-
-  const systemPrompt = buildSystemPrompt();
-  const userPrompt = buildUserPrompt(signal);
-
-  try {
-    const raw = await callClaudeText({
-      systemPrompt,
-      userPrompt,
-      model: MODEL,
-      temperature: TEMPERATURE,
-      maxTokens: 1200,
-    });
-
-    return {
-      signalId: signal.id,
-      variants: parseVariants(raw),
-      generatedAt: Math.floor(Date.now() / 1000),
-    };
-  } catch {
-    const retryRaw = await callClaudeText({
-      systemPrompt,
-      userPrompt: `${userPrompt}\nOnly output valid JSON object. No markdown fences or additional text.`,
-      model: MODEL,
-      temperature: TEMPERATURE,
-      maxTokens: 1200,
-    });
-
-    return {
-      signalId: signal.id,
-      variants: parseVariants(retryRaw),
-      generatedAt: Math.floor(Date.now() / 1000),
-    };
   }
 }

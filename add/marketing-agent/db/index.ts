@@ -193,6 +193,17 @@ export function getUnnotifiedSignals(limit = 20): Signal[] {
 
   return rows.map(mapSignal);
 }
+export function getSignalsSince(epochSeconds: number): Signal[] {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `SELECT id, tweet_id, author, content, url, category, confidence, relevance, sentiment, priority, risk_level, suggested_action, alert_level, source_adapter, raw_json, created_at, notified_at
+       FROM signals WHERE created_at > ? ORDER BY created_at DESC`
+    )
+    .all(epochSeconds) as SignalRow[];
+
+  return rows.map(mapSignal);
+}
 
 export function markSignalNotified(signalId: number): void {
   const db = getDb();

@@ -45,23 +45,66 @@ const SIGNAL_CATEGORIES: SignalCategories = {
   8: '⚠️ risk_event',
 };
 
-const DEFAULT_TONES: ToneConfig[] = [
-  { id: 'helpful_expert', label: 'Helpful', emoji: '', description: '专业权威，提供具体价值' },
-  { id: 'friendly_peer', label: 'Friendly', emoji: '', description: '轻松对等，亲切友好' },
-  { id: 'humble_ack', label: 'Humble', emoji: '', description: '感恩致谢，不强推' },
-  { id: 'direct_rebuttal', label: 'Direct', emoji: '', description: '正面回应关切，建设性反驳' },
+const CATEGORY_STRATEGIES: Record<number, ToneConfig[]> = {
+  0: [],
+  1: [
+    { id: 'thank_support', label: '感谢支持', emoji: '🙏', description: 'Thank and acknowledge the mention' },
+    { id: 'add_detail', label: '补充细节', emoji: '📝', description: 'Add product details or context' },
+    { id: 'invite_try', label: '邀请体验', emoji: '🎯', description: 'Invite to try specific features' },
+  ],
+  2: [
+    { id: 'data_compare', label: '数据对比', emoji: '📊', description: 'Compare with concrete data/metrics' },
+    { id: 'differentiate', label: '差异化亮点', emoji: '✨', description: 'Highlight Byreal unique advantages' },
+    { id: 'objective_take', label: '客观分析', emoji: '🔍', description: 'Objective professional analysis' },
+  ],
+  3: [
+    { id: 'share_insight', label: '分享见解', emoji: '💡', description: 'Share market insight' },
+    { id: 'offer_solution', label: '提供方案', emoji: '🛠️', description: 'Propose actionable solution' },
+    { id: 'show_interest', label: '表达关注', emoji: '👀', description: 'Express engagement and interest' },
+  ],
+  4: [
+    { id: 'add_data', label: '补充数据', emoji: '📈', description: 'Add relevant data points' },
+    { id: 'trend_analysis', label: '趋势解读', emoji: '📉', description: 'Interpret trends and implications' },
+    { id: 'team_perspective', label: '团队观点', emoji: '💬', description: 'Team perspective on these metrics' },
+  ],
+  5: [
+    { id: 'positive_engage', label: '积极回应', emoji: '🌟', description: 'Positive engagement' },
+    { id: 'collab_intent', label: '合作意向', emoji: '🤝', description: 'Express collaboration interest' },
+    { id: 'share_progress', label: '分享进展', emoji: '🚀', description: 'Share Byreal related progress' },
+  ],
+  6: [
+    { id: 'industry_insight', label: '行业洞察', emoji: '🔮', description: 'Industry insight and vision' },
+    { id: 'tech_vision', label: '技术见解', emoji: '⚡', description: 'Technical perspective' },
+    { id: 'express_interest', label: '表达兴趣', emoji: '🎯', description: 'Express strategic interest' },
+  ],
+  7: [
+    { id: 'expert_analysis', label: '专业分析', emoji: '📋', description: 'Professional expert analysis' },
+    { id: 'compliance_view', label: '合规视角', emoji: '⚖️', description: 'Compliance and regulatory angle' },
+    { id: 'market_view', label: '市场观点', emoji: '💹', description: 'Market perspective' },
+  ],
+  8: [
+    { id: 'safety_alert', label: '安全提醒', emoji: '🛡️', description: 'Safety awareness reminder' },
+    { id: 'fact_clarify', label: '事实澄清', emoji: '✅', description: 'Clarify facts objectively' },
+    { id: 'official_response', label: '官方回应', emoji: '📢', description: 'Official Byreal response' },
+  ],
+};
+
+const DEFAULT_STRATEGIES: ToneConfig[] = [
+  { id: 'positive_engage', label: '积极回应', emoji: '🌟', description: 'Positive engagement' },
+  { id: 'share_insight', label: '分享见解', emoji: '💡', description: 'Share insight' },
+  { id: 'show_interest', label: '表达关注', emoji: '👀', description: 'Express interest' },
 ];
 
 function formatToneLabel(tone: ToneConfig): string {
   return (tone.label || tone.id || 'Tone').trim();
 }
 
-function getConfiguredTones(config: any): ToneConfig[] {
+function getStrategiesForCategory(category: number, config: any): ToneConfig[] {
   const tones = config?.tones;
   if (Array.isArray(tones) && tones.length > 0) {
     return tones as ToneConfig[];
   }
-  return DEFAULT_TONES;
+  return CATEGORY_STRATEGIES[category] || DEFAULT_STRATEGIES;
 }
 
 function titleCaseCategory(raw: string): string {
@@ -243,7 +286,8 @@ export class DiscordChannel implements Channel {
         return true;
       }
 
-      const toneRow = buildToneActionRow(DEFAULT_TONES, signal.id);
+      const strategies = CATEGORY_STRATEGIES[signal.category] || DEFAULT_STRATEGIES;
+      const toneRow = buildToneActionRow(strategies, signal.id);
       const feedbackRow = buildFeedbackSelectRow(signal.id);
       const embedVariants = [buildSignalEmbed(signal, SIGNAL_CATEGORIES, 'unified')];
 
@@ -325,7 +369,7 @@ export class DiscordChannel implements Channel {
                   actionEmbed.setColor(0xE67E22);
                 }
                 if (actionChannelName === needsReplyName) {
-                  const tones = getConfiguredTones(config);
+                  const tones = getStrategiesForCategory(signal.category, config);
                   const toneRow = buildToneActionRow(tones, signal.id);
                   const feedbackRow = buildFeedbackSelectRow(signal.id);
 
@@ -631,7 +675,7 @@ export class DiscordChannel implements Channel {
           }
 
           const config = configModule.loadConfig();
-          const tones = getConfiguredTones(config);
+          const tones = getStrategiesForCategory(signal.category, config);
           const tone = tones[toneIndex];
           if (!tone) {
             await interaction.followUp({ content: '⚠️ Invalid tone.', ephemeral: true }).catch(() => undefined);
@@ -677,9 +721,18 @@ export class DiscordChannel implements Channel {
         }
 
         try {
-          const configModule: any = await import('../../marketing-agent/config/loader.js');
+          const [dbModule, configModule] = await Promise.all([
+            import('../../marketing-agent/db/index.js') as Promise<any>,
+            import('../../marketing-agent/config/loader.js') as Promise<any>,
+          ]);
+          const signal = dbModule.getSignalById(signalId);
+          if (!signal) {
+            await interaction.reply({ content: '⚠️ Signal not found.', ephemeral: true }).catch(() => undefined);
+            return;
+          }
           const config = configModule.loadConfig();
-          const tones = getConfiguredTones(config);
+          const tones = getStrategiesForCategory(signal.category, config);
+          const modalTones = tones.length > 0 ? tones : DEFAULT_STRATEGIES;
 
           const modal = new ModalBuilder()
             .setCustomId(`ma_ctx_submit:${signalId}`)
@@ -689,7 +742,7 @@ export class DiscordChannel implements Channel {
             .setCustomId('tone_input')
             .setLabel('Tone (optional)')
             .setStyle(TextInputStyle.Short)
-            .setPlaceholder(tones.slice(0, 3).map((t) => t.label).join(' / '))
+            .setPlaceholder(modalTones.slice(0, 3).map((t) => t.label).join(' / '))
             .setRequired(false);
 
           const contextInput = new TextInputBuilder()
@@ -842,18 +895,19 @@ export class DiscordChannel implements Channel {
           }
 
           const config = configModule.loadConfig();
-          const tones = getConfiguredTones(config);
+          const tones = getStrategiesForCategory(signal.category, config);
+          const availableTones = tones.length > 0 ? tones : DEFAULT_STRATEGIES;
 
           let toneIndex = 0;
           if (toneInput) {
-            const found = tones.findIndex(
+            const found = availableTones.findIndex(
               (t) =>
                 t.label.toLowerCase().includes(toneInput.toLowerCase())
                 || t.id.toLowerCase().includes(toneInput.toLowerCase()),
             );
             if (found >= 0) toneIndex = found;
           }
-          const tone = tones[toneIndex];
+          const tone = availableTones[toneIndex];
           const toneLabel = formatToneLabel(tone);
 
           const contextKey = `${interaction.user.id}:${signalId}`;
