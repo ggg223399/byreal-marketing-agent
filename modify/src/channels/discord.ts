@@ -164,7 +164,7 @@ function buildSignalEmbed(signal: DraftSignal, categories: SignalCategories, _st
     ? signal.sentiment.charAt(0).toUpperCase() + signal.sentiment.slice(1)
     : 'Neutral';
 
-  const separator = '⎯'.repeat(45);
+  const separator = '⎯'.repeat(90);
   const description = signal.url
     ? `${trimmedContent}\n\n[View Tweet](${signal.url})\n\n${separator}`
     : `${trimmedContent}\n\n${separator}`;
@@ -211,7 +211,7 @@ function buildDraftReplyEmbed(signal: DraftSignal, toneLabel: string, draftText:
     ? `✅ ${charCount}/280`
     : `⚠️ ${charCount}/280`;
   
-  const separator = '⎯'.repeat(45);
+  const separator = '⎯'.repeat(90);
   
   const description = [
     `💬 **@${authorName}** 的原推：`,
