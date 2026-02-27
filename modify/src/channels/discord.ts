@@ -1,4 +1,4 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Client, EmbedBuilder, Events, GatewayIntentBits, Message, MessageActionRowComponentBuilder, TextChannel, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Client, EmbedBuilder, Events, GatewayIntentBits, Message, MessageActionRowComponentBuilder, TextChannel, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, MessageType } from 'discord.js';
 import * as fs from 'fs';
 import { resolve } from 'path';
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
@@ -238,6 +238,39 @@ function buildDraftReplyEmbed(signal: DraftSignal, toneLabel: string, draftText:
   }
 
   return embed;
+}
+
+async function sendDraftInThread(
+  signalMessage: Message,
+  signalId: number,
+  toneLabel: string,
+  generateDraft: () => Promise<{ embed: EmbedBuilder }>,
+): Promise<void> {
+  let thread = signalMessage.thread;
+
+  if (!thread) {
+    thread = await signalMessage.startThread({
+      name: `Draft #${signalId}`,
+      autoArchiveDuration: 60,
+    });
+
+    try {
+      const parentChannel = signalMessage.channel;
+      if ('messages' in parentChannel) {
+        const recentMsgs = await parentChannel.messages.fetch({ after: signalMessage.id, limit: 5 });
+        for (const [, msg] of recentMsgs) {
+          if (msg.type === MessageType.ThreadCreated) {
+            await msg.delete().catch(() => undefined);
+            break;
+          }
+        }
+      }
+    } catch {}
+  }
+
+  const loadingMsg = await thread.send(`⏳ Generating draft with ${toneLabel}...`);
+  const { embed } = await generateDraft();
+  await loadingMsg.edit({ content: '', embeds: [embed] });
 }
 
 function buildToneActionRow(tones: ToneConfig[], signalId: number): ActionRowBuilder<MessageActionRowComponentBuilder> {
@@ -734,10 +767,10 @@ export class DiscordChannel implements Channel {
           const toneLabel = formatToneLabel(tone);
 
           const signalMessage = interaction.message;
-          const loadingMsg = await signalMessage.reply(`⏳ Generating draft with ${toneLabel}...`);
-          const draftText = await genModule.generateSingleToneDraft(signal, tone.id, context);
-          const draftEmbed = buildDraftReplyEmbed(signal, toneLabel, draftText);
-          await loadingMsg.edit({ content: '', embeds: [draftEmbed] });
+          await sendDraftInThread(signalMessage, signalId, toneLabel, async () => {
+            const draftText = await genModule.generateSingleToneDraft(signal, tone.id, context);
+            return { embed: buildDraftReplyEmbed(signal, toneLabel, draftText) };
+          });
 
           if (storedContext) {
             this.contextMap.delete(contextKey);
@@ -946,10 +979,10 @@ export class DiscordChannel implements Channel {
             return;
           }
 
-          const loadingMsg = await signalMessage.reply('⏳ Generating draft with context...');
-          const draftText = await genModule.generateSingleToneDraft(signal, tone.id, contextInput);
-          const draftEmbed = buildDraftReplyEmbed(signal, toneLabel, draftText);
-          await loadingMsg.edit({ content: '', embeds: [draftEmbed] });
+          await sendDraftInThread(signalMessage, signalId, toneLabel, async () => {
+            const draftText = await genModule.generateSingleToneDraft(signal, tone.id, contextInput);
+            return { embed: buildDraftReplyEmbed(signal, toneLabel, draftText) };
+          });
 
           await interaction.deleteReply().catch(() => undefined);
         } catch (err) {
