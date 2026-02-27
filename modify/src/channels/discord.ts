@@ -1,4 +1,4 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Client, EmbedBuilder, Events, GatewayIntentBits, Message, MessageActionRowComponentBuilder, TextChannel, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, AnyThreadChannel } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Client, EmbedBuilder, Events, GatewayIntentBits, Message, MessageActionRowComponentBuilder, TextChannel, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from 'discord.js';
 import * as fs from 'fs';
 import { resolve } from 'path';
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
@@ -734,17 +734,7 @@ export class DiscordChannel implements Channel {
           const toneLabel = formatToneLabel(tone);
 
           const signalMessage = interaction.message;
-          let thread: AnyThreadChannel;
-          if (signalMessage.hasThread && signalMessage.thread) {
-            thread = signalMessage.thread;
-          } else {
-            thread = await signalMessage.startThread({
-              name: `Draft — Signal #${signalId}`,
-              autoArchiveDuration: 1440,
-            });
-          }
-
-          const loadingMsg = await thread.send(`⏳ Generating draft with ${toneLabel}...`);
+          const loadingMsg = await signalMessage.reply(`⏳ Generating draft with ${toneLabel}...`);
           const draftText = await genModule.generateSingleToneDraft(signal, tone.id, context);
           const draftEmbed = buildDraftReplyEmbed(signal, toneLabel, draftText);
           await loadingMsg.edit({ content: '', embeds: [draftEmbed] });
@@ -897,16 +887,7 @@ export class DiscordChannel implements Channel {
             );
             await signalMessage.edit({ embeds: [processedEmbed], components: [] });
 
-            let thread: AnyThreadChannel;
-            if (signalMessage.hasThread && signalMessage.thread) {
-              thread = signalMessage.thread;
-            } else {
-              thread = await signalMessage.startThread({
-                name: `Feedback — Signal #${signalId}`,
-                autoArchiveDuration: 1440,
-              });
-            }
-            await thread.send(`📋 Feedback recorded: ${feedbackLabel}`);
+            await signalMessage.reply(`📋 Feedback recorded: ${feedbackLabel}`);
           }
         } catch (err) {
           logger.error({ err, signalId, feedbackValue }, 'Feedback handler failed');
@@ -965,17 +946,7 @@ export class DiscordChannel implements Channel {
             return;
           }
 
-          let thread: AnyThreadChannel;
-          if (signalMessage.hasThread && signalMessage.thread) {
-            thread = signalMessage.thread;
-          } else {
-            thread = await signalMessage.startThread({
-              name: `Draft — Signal #${signalId}`,
-              autoArchiveDuration: 1440,
-            });
-          }
-
-          const loadingMsg = await thread.send('⏳ Generating draft with context...');
+          const loadingMsg = await signalMessage.reply('⏳ Generating draft with context...');
           const draftText = await genModule.generateSingleToneDraft(signal, tone.id, contextInput);
           const draftEmbed = buildDraftReplyEmbed(signal, toneLabel, draftText);
           await loadingMsg.edit({ content: '', embeds: [draftEmbed] });
