@@ -123,6 +123,10 @@ export function resolveTargetChannels(signal: Signal, config: CollectorConfig): 
   const tier2 = config.notifications.tier2Channel ?? 'tier2-signals';
   const tier3 = config.notifications.tier3Channel ?? 'tier3-signals';
   const noise = config.notifications.noiseChannel ?? 'noise';
+
+  if (signal.category === 0) {
+    return { tier: noise };
+  }
   
   let tier: string;
   if (signal.alertLevel === 'red') {

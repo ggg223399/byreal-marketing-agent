@@ -61,6 +61,7 @@ type SignalRow = {
   url: string | null;
   category: SignalCategory;
   confidence: number;
+  relevance: number;
   sentiment: string | null;
   priority: number | null;
   risk_level: string | null;
@@ -91,6 +92,7 @@ function mapSignal(row: SignalRow): Signal {
     url: row.url ?? undefined,
     category: row.category,
     confidence: row.confidence,
+    relevance: row.relevance,
     sentiment: (row.sentiment as Signal['sentiment']) ?? 'neutral',
     priority: row.priority ?? 3,
     riskLevel: (row.risk_level as Signal['riskLevel']) ?? 'low',
@@ -122,6 +124,7 @@ export interface InsertSignalInput {
   url?: string;
   category: SignalCategory;
   confidence: number;
+  relevance: number;
   sentiment?: string;
   priority?: number;
   riskLevel?: string;
@@ -136,9 +139,9 @@ export function insertSignal(input: InsertSignalInput): Signal {
   const result = db
     .prepare(
       `INSERT INTO signals
-        (tweet_id, author, content, url, category, confidence, sentiment, priority, risk_level, suggested_action, alert_level, source_adapter, raw_json)
+        (tweet_id, author, content, url, category, confidence, relevance, sentiment, priority, risk_level, suggested_action, alert_level, source_adapter, raw_json)
        VALUES
-        (@tweetId, @author, @content, @url, @category, @confidence, @sentiment, @priority, @riskLevel, @suggestedAction, @alertLevel, @sourceAdapter, @rawJson)`
+        (@tweetId, @author, @content, @url, @category, @confidence, @relevance, @sentiment, @priority, @riskLevel, @suggestedAction, @alertLevel, @sourceAdapter, @rawJson)`
     )
     .run({
       ...input,
@@ -183,7 +186,7 @@ export function getUnnotifiedSignals(limit = 20): Signal[] {
   const db = getDb();
   const rows = db
     .prepare(
-      `SELECT id, tweet_id, author, content, url, category, confidence, sentiment, priority, risk_level, suggested_action, alert_level, source_adapter, raw_json, created_at, notified_at
+      `SELECT id, tweet_id, author, content, url, category, confidence, relevance, sentiment, priority, risk_level, suggested_action, alert_level, source_adapter, raw_json, created_at, notified_at
        FROM signals WHERE notified_at IS NULL ORDER BY created_at ASC LIMIT ?`
     )
     .all(limit) as SignalRow[];

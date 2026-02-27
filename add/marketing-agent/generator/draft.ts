@@ -50,6 +50,7 @@ function loadBrandContext(brandContextPath?: string): string {
 }
 
 const RECOMMENDED_TONES: Record<SignalCategory, [DraftTone, DraftTone]> = {
+  0: ['friendly_peer', 'humble_ack'],
   1: ['helpful_expert', 'friendly_peer'],
   2: ['helpful_expert', 'friendly_peer'],
   3: ['helpful_expert', 'friendly_peer'],

@@ -24,6 +24,7 @@ type DraftSignal = {
   image?: string;
   category: number;
   confidence: number;
+  relevance?: number;
   sentiment?: 'positive' | 'negative' | 'neutral';
   riskLevel?: string;
   alertLevel?: string;
@@ -33,13 +34,14 @@ type DraftSignal = {
 type SignalCategories = Record<number, string>;
 
 const SIGNAL_CATEGORIES: SignalCategories = {
-  1: '🚀 solana_growth_milestone',
-  2: '🏛️ institutional_adoption',
-  3: '📜 rwa_signal',
-  4: '💧 liquidity_signal',
-  5: '📊 market_structure_insight',
-  6: '🏆 byreal_ranking_mention',
-  7: '🤝 partner_momentum',
+  0: '🔇 noise',
+  1: '⭐ byreal_mention',
+  2: '🔍 competitor_intel',
+  3: '🎯 market_opportunity',
+  4: '📊 defi_metrics',
+  5: '🌱 ecosystem_growth',
+  6: '🔮 future_sectors',
+  7: '📜 rwa_signal',
   8: '⚠️ risk_event',
 };
 
@@ -49,55 +51,6 @@ const DEFAULT_TONES: ToneConfig[] = [
   { id: 'humble_ack', label: 'Humble', emoji: '', description: '感恩致谢，不强推' },
   { id: 'direct_rebuttal', label: 'Direct', emoji: '', description: '正面回应关切，建设性反驳' },
 ];
-
-// Category-specific button labels — each signal category gets contextually relevant button text
-const CATEGORY_BUTTONS: Record<number, Array<{ tone: string; label: string }>> = {
-  1: [ // solana_growth_milestone
-    { tone: 'friendly_peer', label: '🎉 Celebrate' },
-    { tone: 'helpful_expert', label: '📊 Data Commentary' },
-    { tone: 'humble_ack', label: '🚀 Amplify' },
-  ],
-  2: [ // institutional_adoption
-    { tone: 'helpful_expert', label: '🧑‍💼 Expert Analysis' },
-    { tone: 'friendly_peer', label: '📊 Market Impact' },
-    { tone: 'humble_ack', label: '🙏 Welcome Aboard' },
-    { tone: 'direct_rebuttal', label: '💬 Our Position' },
-  ],
-  3: [ // rwa_signal
-    { tone: 'helpful_expert', label: '🧑‍💼 Expert Insight' },
-    { tone: 'friendly_peer', label: '👋 Join Discussion' },
-    { tone: 'humble_ack', label: '📊 Share Context' },
-  ],
-  4: [ // liquidity_signal
-    { tone: 'helpful_expert', label: '📊 Data Insight' },
-    { tone: 'friendly_peer', label: '👋 Discuss' },
-    { tone: 'humble_ack', label: '💧 Our Liquidity' },
-    { tone: 'direct_rebuttal', label: '💬 Clarify' },
-  ],
-  5: [ // market_structure_insight
-    { tone: 'helpful_expert', label: '📊 Analysis' },
-    { tone: 'friendly_peer', label: '👋 Join Chat' },
-    { tone: 'direct_rebuttal', label: '🧠 Our View' },
-    { tone: 'humble_ack', label: '🙏 Great Take' },
-  ],
-  6: [ // byreal_ranking_mention
-    { tone: 'humble_ack', label: '🙏 Thank You' },
-    { tone: 'friendly_peer', label: '🎉 Celebrate' },
-    { tone: 'helpful_expert', label: '📊 More Data' },
-    { tone: 'direct_rebuttal', label: '💬 Add Context' },
-  ],
-  7: [ // partner_momentum
-    { tone: 'friendly_peer', label: '🤝 Collaborate' },
-    { tone: 'humble_ack', label: '🙏 Appreciate' },
-    { tone: 'helpful_expert', label: '📊 Synergy Data' },
-  ],
-  8: [ // risk_event
-    { tone: 'direct_rebuttal', label: '💬 Fact Check' },
-    { tone: 'helpful_expert', label: '🧑‍💼 Expert Response' },
-    { tone: 'humble_ack', label: '🙏 Acknowledge' },
-    { tone: 'friendly_peer', label: '👋 Reassure' },
-  ],
-};
 
 function formatToneLabel(tone: ToneConfig): string {
   return (tone.label || tone.id || 'Tone').trim();
@@ -198,31 +151,17 @@ function buildDraftReplyEmbed(signal: DraftSignal, toneLabel: string, draftText:
   return embed;
 }
 
-function buildToneActionRow(tones: ToneConfig[], signalId: number, category?: number): ActionRowBuilder<MessageActionRowComponentBuilder> {
+function buildToneActionRow(tones: ToneConfig[], signalId: number): ActionRowBuilder<MessageActionRowComponentBuilder> {
   const row = new ActionRowBuilder<MessageActionRowComponentBuilder>();
 
-  // Use category-specific buttons if available, otherwise fall back to configured tones
-  const categoryButtons = category != null ? CATEGORY_BUTTONS[category] : undefined;
-
-  if (categoryButtons) {
-    categoryButtons.forEach((btn, i) => {
-      row.addComponents(
-        new ButtonBuilder()
-          .setCustomId(`ma_tone:${btn.tone}:${signalId}`)
-          .setLabel(btn.label)
-          .setStyle(i === 0 ? ButtonStyle.Success : ButtonStyle.Primary)
-      );
-    });
-  } else {
-    tones.forEach((tone, i) => {
-      row.addComponents(
-        new ButtonBuilder()
-          .setCustomId(`ma_tone:${tone.id}:${signalId}`)
-          .setLabel(formatToneLabel(tone))
-          .setStyle(i === 0 ? ButtonStyle.Success : ButtonStyle.Primary)
-      );
-    });
-  }
+  tones.forEach((tone, i) => {
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`ma_tone:${i}:${signalId}`)
+        .setLabel(formatToneLabel(tone))
+        .setStyle(i === 0 ? ButtonStyle.Success : ButtonStyle.Primary)
+    );
+  });
 
   // Add Context button in same row
   row.addComponents(
@@ -304,7 +243,7 @@ export class DiscordChannel implements Channel {
         return true;
       }
 
-      const toneRow = buildToneActionRow(DEFAULT_TONES, signal.id, signal.category);
+      const toneRow = buildToneActionRow(DEFAULT_TONES, signal.id);
       const feedbackRow = buildFeedbackSelectRow(signal.id);
       const embedVariants = [buildSignalEmbed(signal, SIGNAL_CATEGORIES, 'unified')];
 
@@ -370,14 +309,14 @@ export class DiscordChannel implements Channel {
               embed.setURL(signal.url);
             }
 
-            // Post to tier channel with feedback button
-            const tierFeedbackRow = buildFeedbackSelectRow(signal.id);
-            await tierChannel.send({ embeds: [embed], components: [tierFeedbackRow] });
+            // Post to tier channel (no action buttons - info only)
+            await tierChannel.send({ embeds: [embed] });
 
-            // If action channel exists, post with tone buttons (needs-reply) or feedback only
+            // If action channel exists, post with Generate Reply button (only for needs-reply)
             if (actionChannelName) {
               const actionChannel = findChannel(actionChannelName);
               if (actionChannel) {
+                // Only add tone buttons for needs-reply channel; needs-interaction is info-only
                 const needsReplyName = config.notifications?.needsReplyChannel ?? 'needs-reply';
                 const actionEmbed = EmbedBuilder.from(embed);
                 if (actionChannelName === needsReplyName) {
@@ -385,13 +324,18 @@ export class DiscordChannel implements Channel {
                 } else {
                   actionEmbed.setColor(0xE67E22);
                 }
-                const feedbackRow = buildFeedbackSelectRow(signal.id);
                 if (actionChannelName === needsReplyName) {
                   const tones = getConfiguredTones(config);
-                  const toneRow = buildToneActionRow(tones, signal.id, signal.category);
-                  await actionChannel.send({ embeds: [actionEmbed], components: [toneRow, feedbackRow] });
+                  const toneRow = buildToneActionRow(tones, signal.id);
+                  const feedbackRow = buildFeedbackSelectRow(signal.id);
+
+                  const actionEmbeds = [actionEmbed];
+
+                  for (const previewEmbed of actionEmbeds) {
+                    await actionChannel.send({ embeds: [previewEmbed], components: [toneRow, feedbackRow] });
+                  }
                 } else {
-                  await actionChannel.send({ embeds: [actionEmbed], components: [feedbackRow] });
+                  await actionChannel.send({ embeds: [actionEmbed] });
                 }
               }
             }
@@ -663,10 +607,10 @@ export class DiscordChannel implements Channel {
       const [action, a, b] = customId.split(':');
 
       if (action === 'ma_tone' && interaction.isButton()) {
-        const toneId = a; // tone ID string (e.g. 'helpful_expert')
+        const toneIndex = Number(a);
         const signalId = Number(b);
 
-        if (!toneId || !Number.isFinite(signalId)) {
+        if (!Number.isFinite(toneIndex) || !Number.isFinite(signalId)) {
           await interaction.reply({ content: '⚠️ Invalid action.', ephemeral: true }).catch(() => undefined);
           return;
         }
@@ -688,8 +632,7 @@ export class DiscordChannel implements Channel {
 
           const config = configModule.loadConfig();
           const tones = getConfiguredTones(config);
-          // Find tone by ID, fall back to first tone
-          const tone = tones.find(t => t.id === toneId) || tones[0];
+          const tone = tones[toneIndex];
           if (!tone) {
             await interaction.followUp({ content: '⚠️ Invalid tone.', ephemeral: true }).catch(() => undefined);
             return;
@@ -720,7 +663,7 @@ export class DiscordChannel implements Channel {
             this.contextMap.delete(contextKey);
           }
         } catch (err) {
-          logger.error({ err, signalId, toneId }, 'Tone handler failed');
+          logger.error({ err, signalId, toneIndex }, 'Tone handler failed');
           await interaction.followUp({ content: '⚠️ Failed to generate draft.', ephemeral: true }).catch(() => undefined);
         }
         return;

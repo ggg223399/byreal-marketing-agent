@@ -18,6 +18,7 @@ export interface ClassificationResult {
   tweetId: string;
   category: SignalCategory;
   confidence: number;
+  relevance: number;
   sentiment: Sentiment;
   priority: number;
   riskLevel: RiskLevel;
@@ -26,7 +27,7 @@ export interface ClassificationResult {
   reason: string;
 }
 
-const DEFAULT_MODEL = "claude-haiku-4-5";
+const DEFAULT_MODEL = "claude-sonnet-4-5-20250514";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -48,12 +49,25 @@ function clampConfidence(value: number): number {
   return Math.round(value);
 }
 
+function clampRelevance(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 50;
+  }
+  if (value < 0) {
+    return 0;
+  }
+  if (value > 100) {
+    return 100;
+  }
+  return Math.round(value);
+}
+
 function isValidCategory(value: unknown): value is SignalCategory {
   if (typeof value !== 'number' || !Number.isInteger(value)) {
     return false;
   }
 
-  return value >= 1 && value <= 8 && value in SIGNAL_CATEGORIES;
+  return value >= 0 && value <= 8 && value in SIGNAL_CATEGORIES;
 }
 
 function isSentiment(value: unknown): value is Sentiment {
@@ -110,6 +124,7 @@ function parseAndValidate(raw: string): Array<Omit<ClassificationResult, "alertL
     const tweetId = record.tweetId;
     const category = Number(record.category);
     const confidence = Number(record.confidence);
+    const relevance = clampRelevance(Number(record.relevance));
     const sentiment = record.sentiment;
     const priority = record.priority;
     const riskLevel = record.riskLevel;
@@ -120,7 +135,7 @@ function parseAndValidate(raw: string): Array<Omit<ClassificationResult, "alertL
       throw new Error(`Invalid tweetId at index ${index}`);
     }
     if (!isValidCategory(category)) {
-      throw new Error(`Invalid category at index ${index}. Expected integer 1-8 (${allowedCategoryNames})`);
+      throw new Error(`Invalid category at index ${index}. Expected integer 0-8 (${allowedCategoryNames})`);
     }
     if (typeof reason !== "string" || !reason.trim()) {
       throw new Error(`Invalid reason at index ${index}`);
@@ -139,6 +154,7 @@ function parseAndValidate(raw: string): Array<Omit<ClassificationResult, "alertL
       tweetId,
       category,
       confidence: clampConfidence(confidence),
+      relevance,
       sentiment,
       priority: normalizePriority(priority),
       riskLevel,
@@ -163,32 +179,40 @@ async function callAnthropic(systemPrompt: string, userPrompt: string, model: st
   });
 }
 
-export function deriveAlertLevel(category: SignalCategory, confidence: number): AlertLevel {
+export function deriveAlertLevel(category: SignalCategory, confidence: number, relevance: number): AlertLevel {
   const normalized = clampConfidence(confidence);
+
+  if (relevance < 30 || category === 0) {
+    return 'none';
+  }
 
   if (category === 8) {
     return 'red';
   }
 
   if (category === 1) {
-    return normalized > 80 ? 'red' : 'yellow';
-  }
-
-  if (category === 6) {
     if (normalized > 80) {
       return 'red';
     }
     if (normalized >= 50) {
       return 'orange';
     }
-    return 'none';
+    return 'yellow';
   }
 
-  if (category === 2 || category === 5) {
+  if (category === 2) {
+    return 'orange';
+  }
+
+  if (category === 3) {
+    return normalized > 80 ? 'orange' : 'yellow';
+  }
+
+  if (category === 4) {
     return normalized >= 50 ? 'orange' : 'none';
   }
 
-  if (category === 3 || category === 4 || category === 7) {
+  if (category === 5 || category === 6 || category === 7) {
     return 'yellow';
   }
 
@@ -214,7 +238,7 @@ export async function classifyTweets(
     })
     .join("\n");
 
-  const basePrompt = `Classify these ${tweets.length} tweets. Return JSON array with fields: tweetId, category (1-8), confidence (0-100), sentiment, priority (1-5), riskLevel, suggestedAction, reason.\n${tweetLines}`;
+  const basePrompt = `Classify these ${tweets.length} tweets. Return JSON array with fields: tweetId, category (0-8), confidence (0-100), relevance (0-100), sentiment, priority (1-5), riskLevel, suggestedAction, reason.\n${tweetLines}`;
   const retryPrompt = `${basePrompt}\nOnly output valid JSON. Do not include markdown fences or additional text.`;
 
   let parsed: Array<Omit<ClassificationResult, "alertLevel">>;
@@ -236,7 +260,7 @@ export async function classifyTweets(
     if (!match) {
       throw new Error(`Missing classification for tweet ${tweet.id}`);
     }
-    const alertLevel = deriveAlertLevel(match.category, match.confidence);
+    const alertLevel = deriveAlertLevel(match.category, match.confidence, match.relevance);
     return { ...match, alertLevel };
   });
 }

@@ -1,63 +1,70 @@
-# Byreal Solana/DeFi Signal Classification Rules
+# Byreal Signal Classification Rules
 
-Classify each tweet into exactly one signal category for Byreal market intelligence.
+You are classifying tweets for Byreal - a Solana-native CLMM DEX focused on concentrated liquidity, social copy-LP (Real Farmer), and new asset launches. Incubated by Bybit, Top 10 Solana DEX by TVL.
 
-## Allowed Signal Categories (Use Number)
+## Categories (Use Number)
 
-- `1` = `solana_growth_milestone`
-- `2` = `institutional_adoption`
-- `3` = `rwa_signal`
-- `4` = `liquidity_signal`
-- `5` = `market_structure_insight`
-- `6` = `byreal_ranking_mention`
-- `7` = `partner_momentum`
-- `8` = `risk_event`
+- `0` = `noise` - Not relevant to Byreal's interests. Default category when nothing else fits.
+- `1` = `byreal_mention` - Byreal directly mentioned, ranked, compared, or discussed.
+- `2` = `competitor_intel` - Competitor DEX activity: Raydium, Orca, Meteora, Lifinity, Jupiter (aggregator), Drift, Kamino. Product launches, TVL changes, feature updates.
+- `3` = `market_opportunity` - New token launches, meme coin trends, trending assets, listing opportunities Byreal could act on. Actionable market openings.
+- `4` = `defi_metrics` - Quantitative DeFi data: TVL, volume, fees, LP yields, funding rates, liquidation data. Must contain specific numbers.
+- `5` = `ecosystem_growth` - Solana ecosystem developments: new integrations, institutional adoption, developer tooling, infrastructure upgrades, partnerships with measurable impact.
+- `6` = `future_sectors` - AI x DeFi, prediction markets, perpetual contracts (perps), lending protocols, on-chain derivatives. Emerging sectors Byreal is exploring.
+- `7` = `rwa_signal` - Real-world asset tokenization, tokenized stocks/bonds/T-bills, TradFi-to-DeFi bridges, regulatory frameworks for RWA.
+- `8` = `risk_event` - Exploits, hacks, rug pulls, depegs, validator outages, regulatory bans. Safety-critical.
 
-## Detection Logic (Scoring-Based)
+## Relevance Scoring (0-100)
 
-Use evidence-based scoring. Assign confidence by signal density, clarity, and specificity.
+Rate how relevant this tweet is to Byreal's business interests:
+- 90-100: Directly about Byreal or immediately actionable
+- 70-89: Highly relevant to Byreal's current/future business
+- 50-69: Moderately relevant, useful context
+- 30-49: Tangentially related
+- 0-29: Not relevant -> should be category 0 (noise)
 
-1. Category `1` (`solana_growth_milestone`)
-- Must contain all 3 components:
-  - metric keyword (TVL, volume, DAU, active wallets, transactions, open interest, fees, revenue)
-  - growth descriptor (ATH, breakout, surging, accelerating, record high, up, increasing)
-  - numeric expression (% change, absolute number, MoM/YoY/QoQ)
-- Example: "Solana TVL hits ATH, up 23% MoM"
+**If relevance < 30, MUST set category to 0 (noise).**
 
-2. Category `2` (`institutional_adoption`)
-- Solana tied to institutions, custody, ETF, RWA rails, prime brokerage, banks, asset managers, funds.
-- Also applies when capital markets narrative density is high (institutional framing, compliance, allocation, enterprise rollout).
+## Byreal's Interest Areas
 
-3. Category `3` (`rwa_signal`)
-- RWA issuance, tokenized equities/bonds/T-bills/credit, onchain securitization, TradFi asset tokenization.
-- Mentions of TradFi integration into tokenized real-world assets.
+**Current Core:**
+- CLMM/concentrated liquidity pools and LP strategies
+- Social copy-LP (Real Farmer creators/followers)
+- New asset launches and first-to-list opportunities
+- Meme coin liquidity provision
+- Bybit Alpha integration and CEX->DeFi pipeline
+- DEX rankings, TVL, volume, fees
 
-4. Category `4` (`liquidity_signal`)
-- TVL growth/decline, volume spikes, net inflow/outflow, capital rotation, liquidity formation.
-- Includes pair depth, LP migration, order book/AMM liquidity concentration shifts.
+**Future Expansion:**
+- AI-powered DeFi (AI agents, automated LP, AI trading)
+- Prediction markets on Solana
+- Perpetual contracts / on-chain derivatives
+- Lending and borrowing protocols
+- RWA / tokenized real-world assets (xStocks)
 
-5. Category `5` (`market_structure_insight`)
-- Structural shift or market regime transition, not just one-off news.
-- 3+ accounts reporting same milestone OR clear quarter-over-quarter pattern evidence.
-- Includes durable changes in flow, participant mix, venue dominance, narrative regime.
+**Competitors to Watch:**
+- Direct: Raydium, Orca, Meteora, Lifinity
+- Indirect: Jupiter, Drift, Kamino, MarginFi
+- Emerging: AI agent DEXs, prediction market DEXs
 
-6. Category `6` (`byreal_ranking_mention`)
-- Byreal appears in ranking, leaderboard, chart, list, benchmark, side-by-side comparison.
-- High importance when top-5 mention or negative comparison framing.
+## Classification Guidelines
 
-7. Category `7` (`partner_momentum`)
-- Byreal partner account posts measurable progress: metrics, funding, launch, integration, institutional deal.
-- Should indicate momentum beyond generic marketing language.
+1. **Default to noise (0)** unless there is clear relevance to Byreal's interests.
+2. When multiple categories fit, choose by actionability - which category enables Byreal to DO something?
+3. Category 8 (risk_event) takes priority if severe operational/financial risk is explicit.
+4. Confidence = how sure you are about the category assignment (0-100).
+5. Relevance = how useful this signal is to Byreal specifically (0-100). These are INDEPENDENT scores.
 
-8. Category `8` (`risk_event`)
-- Exploit, hack, drained funds, insolvency, rug, outage, validator failure, depeg, major incident, regulatory ban.
-- Safety-first: if severe operational/financial risk is explicit, classify as category `8` (`risk_event`).
+## Negative Examples (DO NOT classify as signal)
 
-## Multi-Class Resolution
-
-If multiple categories could fit, choose one category using action priority:
-- red-priority classes > orange-priority classes > yellow-priority classes
-- If still tied, choose the category with strongest explicit evidence and numeric specificity.
+These should be category 0 (noise) with low relevance:
+- Generic Solana staking news (Marinade, Jito staking rewards) unless tied to LP or DEX activity
+- Non-Solana chain DeFi (Ethereum L2s, BNB, Avalanche) unless comparing with Solana
+- Pure price predictions or speculation without data ("SOL to $500!")
+- Personal opinions / emotional posts without verifiable data
+- NFT collection news (unless the asset is listed on Byreal)
+- General crypto news unrelated to DeFi (Bitcoin ETF, Ethereum upgrades, etc.)
+- Marketing fluff / airdrop announcements / engagement farming
 
 ## Output JSON Requirements
 
@@ -65,10 +72,11 @@ Return valid JSON array only. No markdown, no extra text.
 
 Each item must include:
 - `tweetId`: string
-- `category`: integer from 1 to 8
+- `category`: integer from 0 to 8
 - `confidence`: integer from 0 to 100
+- `relevance`: integer from 0 to 100
 - `sentiment`: `positive` | `neutral` | `negative`
 - `priority`: integer 1-5 (5 = highest urgency)
 - `riskLevel`: `low` | `medium` | `high`
 - `suggestedAction`: `qrt_positioning` | `reply_supportive` | `like_only` | `monitor` | `escalate_internal`
-- `reason`: concise evidence-based reason
+- `reason`: concise evidence-based reason (max 2 sentences)

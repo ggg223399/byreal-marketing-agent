@@ -1,25 +1,27 @@
 export const SIGNAL_CATEGORIES = {
-  1: 'solana_growth_milestone',
-  2: 'institutional_adoption',
-  3: 'rwa_signal',
-  4: 'liquidity_signal',
-  5: 'market_structure_insight',
-  6: 'byreal_ranking_mention',
-  7: 'partner_momentum',
+  0: 'noise',
+  1: 'byreal_mention',
+  2: 'competitor_intel',
+  3: 'market_opportunity',
+  4: 'defi_metrics',
+  5: 'ecosystem_growth',
+  6: 'future_sectors',
+  7: 'rwa_signal',
   8: 'risk_event',
 } as const;
 
-export type SignalCategory = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+export type SignalCategory = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 export type SignalClass = typeof SIGNAL_CATEGORIES[SignalCategory];
 
 export const CATEGORY_BY_NAME: Record<SignalClass, SignalCategory> = {
-  solana_growth_milestone: 1,
-  institutional_adoption: 2,
-  rwa_signal: 3,
-  liquidity_signal: 4,
-  market_structure_insight: 5,
-  byreal_ranking_mention: 6,
-  partner_momentum: 7,
+  noise: 0,
+  byreal_mention: 1,
+  competitor_intel: 2,
+  market_opportunity: 3,
+  defi_metrics: 4,
+  ecosystem_growth: 5,
+  future_sectors: 6,
+  rwa_signal: 7,
   risk_event: 8,
 };
 
@@ -49,6 +51,7 @@ export interface Signal {
   url?: string;
   category: SignalCategory;
   confidence: number;
+  relevance: number;
   sentiment: Sentiment;
   priority: number;
   riskLevel: RiskLevel;

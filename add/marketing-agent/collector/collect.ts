@@ -15,7 +15,7 @@ function createAdapter(type: string): DataSourceAdapter {
     case 'mock': return new MockAdapter();
     case 'twitterapi_io': return new TwitterApiIoAdapter();
     case 'twitter_v2': return new TwitterV2Adapter();
-    case 'xpoz': return new XpozAdapter();
+case 'xpoz': return new XpozAdapter();
     case 'xai_search': return new XaiSearchAdapter();
     default: throw new Error(`Unknown adapter type: ${type}`);
   }
@@ -44,16 +44,9 @@ async function main() {
   const results = await classifyTweets(tweets, config);
 
   if (DRY_RUN) {
-    const counts: Record<number, number> = {
-      1: 0,
-      2: 0,
-      3: 0,
-      4: 0,
-      5: 0,
-      6: 0,
-      7: 0,
-      8: 0,
-    };
+    const counts = Object.fromEntries(
+      Object.keys(SIGNAL_CATEGORIES).map((key) => [Number(key), 0])
+    ) as Record<number, number>;
 
     for (const result of results) {
       counts[result.category] += 1;
@@ -83,6 +76,7 @@ async function main() {
       url: tweet.url,
       category: classification.category,
       confidence: classification.confidence,
+      relevance: classification.relevance,
       sentiment: classification.sentiment,
       priority: classification.priority,
       riskLevel: classification.riskLevel,
