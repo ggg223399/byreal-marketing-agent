@@ -30,6 +30,7 @@ type DraftSignal = {
   alertLevel?: string;
   suggestedAction?: string;
   created_at?: string;
+  rawJson?: string;
 };
 type SignalCategories = Record<number, string>;
 
@@ -135,8 +136,21 @@ function buildSignalEmbed(signal: DraftSignal, categories: SignalCategories, _st
   const category = categories[signal.category] ?? `unknown_${signal.category}`;
   const rawCategory = category.includes(' ') ? category.split(' ').slice(1).join(' ') : category;
   const categoryName = titleCaseCategory(rawCategory);
-  const content = signal.content.replace(/\s+/g, ' ').trim();
-  const imageUrl = signal.imageUrl || signal.image_url || signal.image;
+  const content = signal.content.trim();
+  const maxDescLen = 3800;
+  const trimmedContent = content.length > maxDescLen
+    ? `${content.slice(0, maxDescLen)}…`
+    : content;
+  let imageUrl = signal.imageUrl || signal.image_url || signal.image;
+  if (!imageUrl && signal.rawJson) {
+    try {
+      const rawTweet = JSON.parse(signal.rawJson);
+      const metaImage = rawTweet?.metadata?.imageUrl;
+      if (typeof metaImage === 'string' && metaImage.startsWith('http')) {
+        imageUrl = metaImage;
+      }
+    } catch {}
+  }
   const createdAt = signal.created_at ? new Date(signal.created_at) : new Date();
   const authorName = signal.author.replace(/^@/, '');
 
@@ -152,8 +166,8 @@ function buildSignalEmbed(signal: DraftSignal, categories: SignalCategories, _st
 
   const separator = '----------------------------------------';
   const description = signal.url
-    ? `${content}\n\n[View Tweet](${signal.url})\n\n${separator}`
-    : `${content}\n\n${separator}`;
+    ? `${trimmedContent}\n\n[View Tweet](${signal.url})\n\n${separator}`
+    : `${trimmedContent}\n\n${separator}`;
 
   const embed = new EmbedBuilder()
     .setColor(borderColor)
@@ -177,14 +191,46 @@ function buildSignalEmbed(signal: DraftSignal, categories: SignalCategories, _st
 
 function buildDraftReplyEmbed(signal: DraftSignal, toneLabel: string, draftText: string): EmbedBuilder {
   const safeDraftText = draftText.replace(/```/g, "'''").trim();
+  const authorName = signal.author.replace(/^@/, '');
+  
+  // Truncate original tweet for context (max 200 chars)
+  const originalContent = signal.content.trim();
+  const truncatedOriginal = originalContent.length > 200
+    ? originalContent.slice(0, 197) + '...'
+    : originalContent;
+  
+  // Quote the original tweet with > markdown
+  const quotedOriginal = truncatedOriginal
+    .split('\n')
+    .map(line => `> ${line}`)
+    .join('\n');
+  
+  // Character count for Twitter's 280 limit
+  const charCount = safeDraftText.length;
+  const charIndicator = charCount <= 280 
+    ? `✅ ${charCount}/280`
+    : `⚠️ ${charCount}/280`;
+  
+  const separator = '─'.repeat(30);
+  
+  const description = [
+    `💬 **@${authorName}** 的原推：`,
+    quotedOriginal,
+    '',
+    separator,
+    '',
+    '✍️ **Draft Reply:**',
+    safeDraftText,
+  ].join('\n');
+  
   const embed = new EmbedBuilder()
     .setColor(0x1DA1F2)
-    .setAuthor({
-      name: `@${signal.author}`,
-      url: signal.url || undefined,
-    })
-    .setDescription(safeDraftText)
-    .setFooter({ text: `Draft Reply · ${toneLabel} · #${signal.id}` })
+    .setTitle(`📝 ${toneLabel}`)
+    .setDescription(description)
+    .addFields(
+      { name: 'Characters', value: charIndicator, inline: true },
+    )
+    .setFooter({ text: `Signal #${signal.id}` })
     .setTimestamp(new Date());
 
   if (signal.url) {

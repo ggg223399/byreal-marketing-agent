@@ -12,7 +12,8 @@ const API_MAX_TWEETS_PER_QUERY = 100;
 
 const SYSTEM_PROMPT = `You are a tweet collector. Search X for the requested tweets and return them as a JSON object.
 Return ONLY valid JSON with this schema:
-{"tweets": [{"id": "tweet_id", "author": "@username", "content": "tweet text", "url": "https://x.com/user/status/id", "created_at": "ISO8601 datetime", "metrics": {"likes": 0, "retweets": 0, "replies": 0, "views": 0}}]}
+{"tweets": [{"id": "tweet_id", "author": "@username", "content": "tweet text", "url": "https://x.com/user/status/id", "created_at": "ISO8601 datetime", "image_url": "https://pbs.twimg.com/... or null if no image", "metrics": {"likes": 0, "retweets": 0, "replies": 0, "views": 0}}]}
+Include image_url only if the tweet has an attached image, otherwise set to null.
 If no tweets found, return {"tweets": []}.
 Do NOT include any explanation, only the JSON object.`;
 
@@ -43,6 +44,7 @@ interface XaiTweet {
   content?: string;
   url?: string;
   created_at?: string;
+  image_url?: string | null;
   metrics?: {
     likes?: number;
     retweets?: number;
@@ -118,6 +120,7 @@ function mapTweetToRaw(tweet: XaiTweet): RawTweet {
   const author = toAuthorWithPrefix(tweet.author);
   const content = (tweet.content ?? '').trim();
   const url = (tweet.url ?? '').trim() || `https://x.com/${getAuthorForUrl(author)}/status/${id}`;
+  const imageUrl = typeof tweet.image_url === 'string' ? tweet.image_url.trim() : undefined;
 
   return {
     id,
@@ -125,7 +128,10 @@ function mapTweetToRaw(tweet: XaiTweet): RawTweet {
     content,
     url,
     created_at: toUnixSeconds(tweet.created_at),
-    metadata: tweet.metrics,
+    metadata: {
+      ...(tweet.metrics ?? {}),
+      ...(imageUrl ? { imageUrl } : {}),
+    },
   };
 }
 
