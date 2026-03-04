@@ -1,31 +1,34 @@
-#!/bin/bash
-# Collector runner for cron — sets up environment properly
-# PROJECT_DIR is auto-detected from script location (scripts/ → marketing-agent/ → NanoClaw root)
-#
-# Cron should run every minute:  * * * * * /path/to/run-collector.sh
-# Actual collection interval is controlled by polling_interval_minutes in config.yaml
+#!/usr/bin/env bash
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"    # scripts/ → marketing-agent/ → NanoClaw root
-NODE_BIN="$(dirname "$(which node)" 2>/dev/null)"    # auto-detect from PATH; override if needed
-CLAUDE_BIN="$(dirname "$(which claude)" 2>/dev/null)" # claude CLI needed by classifier
+PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-export PATH="$NODE_BIN:$CLAUDE_BIN:$PATH"
-unset CLAUDECODE 2>/dev/null || true  # prevent nested-session error when called from Claude Code
+export NVM_DIR="$HOME/.nvm"
+if [ -s "$NVM_DIR/nvm.sh" ]; then
+  . "$NVM_DIR/nvm.sh"
+fi
+
+export PATH="$HOME/.local/bin:$PATH"
+unset CLAUDECODE 2>/dev/null || true
 
 cd "$PROJECT_DIR"
 
-# Load environment variables
-set -a
-source .env
-set +a
+LOCK_FILE="/tmp/nanoclaw-collector.lock"
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+  exit 0
+fi
 
-# Read polling_interval_minutes from config.yaml (default 5)
+if [ -f ".env" ]; then
+  set -a
+  . ./.env
+  set +a
+fi
+
 INTERVAL=$(grep 'polling_interval_minutes' config.yaml 2>/dev/null | head -1 | sed 's/.*: *//' | tr -d ' ')
 INTERVAL=${INTERVAL:-5}
 
-# Check last run timestamp to respect polling interval
 LOCK_FILE="/tmp/nanoclaw-collector-last-run"
 NOW=$(date +%s)
 if [ -f "$LOCK_FILE" ]; then
@@ -37,11 +40,21 @@ if [ -f "$LOCK_FILE" ]; then
   fi
 fi
 
-# Record this run
 echo "$NOW" > "$LOCK_FILE"
 
 mkdir -p logs
-
-# Run collector with timestamp
 echo "--- $(date -Iseconds) ---" >> logs/collector.log
-npx tsx marketing-agent/collector/collect.ts >> logs/collector.log 2>&1
+
+COLLECTOR="dist/marketing-agent/collector/collect.js"
+if [ ! -f "$COLLECTOR" ]; then
+  echo "ERROR: $COLLECTOR not found. Run npm run build first." >> logs/collector.log
+  exit 1
+fi
+
+for pipeline in mentions network trends crisis; do
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Running $pipeline pipeline..." >> logs/collector.log
+  if ! timeout 180 node "$COLLECTOR" --pipeline="$pipeline" >> logs/collector.log 2>&1; then
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] WARNING: $pipeline pipeline failed or timed out" >> logs/collector.log
+  fi
+  sleep 2
+done

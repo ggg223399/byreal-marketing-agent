@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { loadConfig } from '../config/loader.js';
+import { loadConfig, loadAccountsConfig, loadNarrativesConfig, buildNarrativeSummary } from '../config/loader.js';
 
 function makeTmpDir(): string {
   return mkdtempSync(path.join(os.tmpdir(), 'byreal-config-test-'));
@@ -179,5 +179,74 @@ describe('config loader', () => {
     const config = loadConfig(file);
     expect(config.dataSource.type).toBe('xpoz');
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe('loadAccountsConfig', () => {
+  it('returns accounts organized by tier', () => {
+    const accounts = loadAccountsConfig();
+    expect(accounts).toHaveProperty('S');
+    expect(accounts).toHaveProperty('A');
+    expect(accounts).toHaveProperty('B');
+    expect(Array.isArray(accounts.S)).toBe(true);
+    expect(Array.isArray(accounts.A)).toBe(true);
+    expect(Array.isArray(accounts.B)).toBe(true);
+  });
+
+  it('each account has handle and tier', () => {
+    const accounts = loadAccountsConfig();
+    const allAccounts = [...accounts.S, ...accounts.A, ...accounts.B];
+    for (const account of allAccounts) {
+      expect(typeof account.handle).toBe('string');
+      expect(account.handle).toBeTruthy();
+      expect(['S', 'A', 'B']).toContain(account.tier);
+    }
+  });
+
+  it('each account has keywords array', () => {
+    const accounts = loadAccountsConfig();
+    const allAccounts = [...accounts.S, ...accounts.A, ...accounts.B];
+    for (const account of allAccounts) {
+      expect(Array.isArray(account.keywords)).toBe(true);
+    }
+  });
+});
+
+describe('loadNarrativesConfig', () => {
+  it('returns narratives array', () => {
+    const narratives = loadNarrativesConfig();
+    expect(Array.isArray(narratives)).toBe(true);
+  });
+
+  it('each narrative has required fields', () => {
+    const narratives = loadNarrativesConfig();
+    for (const narrative of narratives) {
+      expect(typeof narrative.tag).toBe('string');
+      expect(narrative.tag).toBeTruthy();
+      expect(Array.isArray(narrative.keywords)).toBe(true);
+      expect(typeof narrative.description).toBe('string');
+      expect(typeof narrative.active).toBe('boolean');
+    }
+  });
+});
+
+describe('buildNarrativeSummary', () => {
+  it('returns a non-empty string', () => {
+    const summary = buildNarrativeSummary();
+    expect(typeof summary).toBe('string');
+    expect(summary.length).toBeGreaterThan(0);
+  });
+
+  it('contains narrative tags when narratives are active', () => {
+    const narratives = loadNarrativesConfig();
+    const activeNarratives = narratives.filter(n => n.active);
+    
+    if (activeNarratives.length > 0) {
+      const summary = buildNarrativeSummary();
+      expect(summary).toContain('Current narrative themes:');
+      for (const narrative of activeNarratives) {
+        expect(summary).toContain(narrative.tag);
+      }
+    }
   });
 });

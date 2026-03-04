@@ -4,6 +4,7 @@ import { resolve } from 'path';
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { logger } from '../logger.js';
 import { Channel, OnChatMetadata, OnInboundMessage, RegisteredGroup } from '../types.js';
+import type { ActionType, Pipeline, PipelineSignal, ToneItem } from '../../marketing-agent/types/index.js';
 
 export interface DiscordChannelOpts {
   onMessage: OnInboundMessage;
@@ -12,100 +13,61 @@ export interface DiscordChannelOpts {
   draftChannel?: string;
 }
 
-type ToneConfig = { id: string; label: string; emoji: string; description: string };
-
-type DraftSignal = {
-  id: number;
-  author: string;
-  content: string;
-  url?: string;
+type DraftSignal = PipelineSignal & {
+  tones: ToneItem[] | string;
   imageUrl?: string;
   image_url?: string;
   image?: string;
-  category: number;
-  confidence: number;
-  relevance?: number;
-  sentiment?: 'positive' | 'negative' | 'neutral';
-  riskLevel?: string;
-  alertLevel?: string;
-  suggestedAction?: string;
   created_at?: string;
-  rawJson?: string;
-};
-type SignalCategories = Record<number, string>;
-
-const SIGNAL_CATEGORIES: SignalCategories = {
-  0: '🔇 noise',
-  1: '⭐ byreal_mention',
-  2: '🔍 competitor_intel',
-  3: '🎯 market_opportunity',
-  4: '📊 defi_metrics',
-  5: '🌱 ecosystem_growth',
-  6: '🔮 future_sectors',
-  7: '📜 rwa_signal',
-  8: '⚠️ risk_event',
 };
 
-const CATEGORY_STRATEGIES: Record<number, ToneConfig[]> = {
-  0: [],
-  1: [
-    { id: 'thank_support', label: '感谢支持', emoji: '🙏', description: 'Thank and acknowledge the mention' },
-    { id: 'add_detail', label: '补充细节', emoji: '📝', description: 'Add product details or context' },
-    { id: 'invite_try', label: '邀请体验', emoji: '🎯', description: 'Invite to try specific features' },
-  ],
-  2: [
-    { id: 'data_compare', label: '数据对比', emoji: '📊', description: 'Compare with concrete data/metrics' },
-    { id: 'differentiate', label: '差异化亮点', emoji: '✨', description: 'Highlight Byreal unique advantages' },
-    { id: 'objective_take', label: '客观分析', emoji: '🔍', description: 'Objective professional analysis' },
-  ],
-  3: [
-    { id: 'share_insight', label: '分享见解', emoji: '💡', description: 'Share market insight' },
-    { id: 'offer_solution', label: '提供方案', emoji: '🛠️', description: 'Propose actionable solution' },
-    { id: 'show_interest', label: '表达关注', emoji: '👀', description: 'Express engagement and interest' },
-  ],
-  4: [
-    { id: 'add_data', label: '补充数据', emoji: '📈', description: 'Add relevant data points' },
-    { id: 'trend_analysis', label: '趋势解读', emoji: '📉', description: 'Interpret trends and implications' },
-    { id: 'team_perspective', label: '团队观点', emoji: '💬', description: 'Team perspective on these metrics' },
-  ],
-  5: [
-    { id: 'positive_engage', label: '积极回应', emoji: '🌟', description: 'Positive engagement' },
-    { id: 'collab_intent', label: '合作意向', emoji: '🤝', description: 'Express collaboration interest' },
-    { id: 'share_progress', label: '分享进展', emoji: '🚀', description: 'Share Byreal related progress' },
-  ],
-  6: [
-    { id: 'industry_insight', label: '行业洞察', emoji: '🔮', description: 'Industry insight and vision' },
-    { id: 'tech_vision', label: '技术见解', emoji: '⚡', description: 'Technical perspective' },
-    { id: 'express_interest', label: '表达兴趣', emoji: '🎯', description: 'Express strategic interest' },
-  ],
-  7: [
-    { id: 'expert_analysis', label: '专业分析', emoji: '📋', description: 'Professional expert analysis' },
-    { id: 'compliance_view', label: '合规视角', emoji: '⚖️', description: 'Compliance and regulatory angle' },
-    { id: 'market_view', label: '市场观点', emoji: '💹', description: 'Market perspective' },
-  ],
-  8: [
-    { id: 'safety_alert', label: '安全提醒', emoji: '🛡️', description: 'Safety awareness reminder' },
-    { id: 'fact_clarify', label: '事实澄清', emoji: '✅', description: 'Clarify facts objectively' },
-    { id: 'official_response', label: '官方回应', emoji: '📢', description: 'Official Byreal response' },
-  ],
-};
-
-const DEFAULT_STRATEGIES: ToneConfig[] = [
-  { id: 'positive_engage', label: '积极回应', emoji: '🌟', description: 'Positive engagement' },
-  { id: 'share_insight', label: '分享见解', emoji: '💡', description: 'Share insight' },
-  { id: 'show_interest', label: '表达关注', emoji: '👀', description: 'Express interest' },
-];
-
-function formatToneLabel(tone: ToneConfig): string {
+function formatToneLabel(tone: ToneItem): string {
   return (tone.label || tone.id || 'Tone').trim();
 }
 
-function getStrategiesForCategory(category: number, config: any): ToneConfig[] {
-  const tones = config?.tones;
-  if (Array.isArray(tones) && tones.length > 0) {
-    return tones as ToneConfig[];
+function parseSignalTones(signal: DraftSignal): ToneItem[] {
+  const normalize = (tone: unknown): ToneItem | null => {
+    if (!tone || typeof tone !== 'object') return null;
+    const raw = tone as Partial<ToneItem> & { name?: string };
+    const id = typeof raw.id === 'string' ? raw.id.trim() : '';
+    const labelCandidate = typeof raw.label === 'string'
+      ? raw.label.trim()
+      : (typeof raw.name === 'string' ? raw.name.trim() : '');
+    if (!id) return null;
+    return {
+      id,
+      label: labelCandidate || id,
+      description: typeof raw.description === 'string' ? raw.description : '',
+    };
+  };
+
+  if (Array.isArray(signal.tones)) {
+    return signal.tones.map(normalize).filter((tone): tone is ToneItem => Boolean(tone));
   }
-  return CATEGORY_STRATEGIES[category] || DEFAULT_STRATEGIES;
+  if (typeof signal.tones === 'string') {
+    try {
+      const parsed = JSON.parse(signal.tones) as unknown;
+      if (Array.isArray(parsed)) {
+        return parsed.map(normalize).filter((tone): tone is ToneItem => Boolean(tone));
+      }
+    } catch {}
+  }
+  return [];
+}
+
+function parseToneActionCustomId(customId: string): { toneId: string; signalId: number } | null {
+  const match = customId.match(/^ma_tone:(.+):(\d+)$/);
+  if (!match) {
+    return null;
+  }
+
+  const toneId = match[1];
+  const signalId = Number(match[2]);
+  if (!toneId || !Number.isFinite(signalId)) {
+    return null;
+  }
+
+  return { toneId, signalId };
 }
 
 function titleCaseCategory(raw: string): string {
@@ -115,29 +77,97 @@ function titleCaseCategory(raw: string): string {
     .join(' ');
 }
 
-type SignalEmbedStyle = 'unified';
-
-function getPriorityFromConfidence(confidence: number): string {
-  if (confidence >= 80) return 'P1';
-  if (confidence >= 50) return 'P2';
-  return 'P3';
+function pipelineLabel(pipeline: Pipeline): string {
+  if (pipeline === 'mentions') return 'Mentions';
+  if (pipeline === 'network') return 'Network';
+  if (pipeline === 'trends') return 'Trends';
+  return 'Crisis';
 }
 
-function actionLabel(action?: string): string {
-  if (action === 'qrt_positioning') return '📢 Quote Tweet';
-  if (action === 'reply_supportive') return '💬 Reply · Supportive';
-  if (action === 'like_only') return '👍 Like Only';
-  if (action === 'monitor') return '👀 Monitor';
-  if (action === 'escalate_internal') return '🚨 Escalate · Internal';
-  return '—';
+function actionLabel(actionType: ActionType): string {
+  if (actionType === 'reply') return 'Reply';
+  if (actionType === 'qrt') return 'Quote Tweet';
+  if (actionType === 'statement') return 'Statement';
+  if (actionType === 'like') return 'Like';
+  if (actionType === 'monitor') return 'Monitor';
+  return 'Skip';
 }
 
-function buildSignalEmbed(signal: DraftSignal, categories: SignalCategories, _style: SignalEmbedStyle = 'unified'): EmbedBuilder {
-  const category = categories[signal.category] ?? `unknown_${signal.category}`;
-  const rawCategory = category.includes(' ') ? category.split(' ').slice(1).join(' ') : category;
-  const categoryName = titleCaseCategory(rawCategory);
+function pipelineColor(pipeline: Pipeline): number {
+  if (pipeline === 'mentions') return 0x3498DB;
+  if (pipeline === 'network') return 0x2ECC71;
+  if (pipeline === 'trends') return 0x9B59B6;
+  return 0xE74C3C;
+}
+
+function formatCount(n: number | undefined): string {
+  if (n == null || n === 0) return '0';
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
+function formatTweetTime(date: Date): string {
+  const nowInShanghai = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
+  const dateInShanghai = new Date(date.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
+  const isToday = nowInShanghai.getFullYear() === dateInShanghai.getFullYear()
+    && nowInShanghai.getMonth() === dateInShanghai.getMonth()
+    && nowInShanghai.getDate() === dateInShanghai.getDate();
+  const timeStr = date.toLocaleString('en-US', {
+    timeZone: 'Asia/Shanghai',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+  if (isToday) return `Today at ${timeStr}`;
+  const monthDay = date.toLocaleString('en-US', {
+    timeZone: 'Asia/Shanghai',
+    month: 'short',
+    day: 'numeric',
+  });
+  return `${monthDay} at ${timeStr}`;
+}
+
+function toDateFromUnknown(value: unknown): Date | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return new Date(value * 1000);
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const asNum = Number(value);
+    if (Number.isFinite(asNum) && asNum > 0) {
+      return new Date(asNum * 1000);
+    }
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+function getTweetCreatedAt(signal: DraftSignal): Date {
+  if (signal.rawJson) {
+    try {
+      const raw = JSON.parse(signal.rawJson);
+      const fromTweet = toDateFromUnknown(raw?.tweet?.created_at);
+      if (fromTweet) return fromTweet;
+      const fromRoot = toDateFromUnknown(raw?.created_at);
+      if (fromRoot) return fromRoot;
+    } catch {}
+  }
+
+  if (signal.createdAt) {
+    return new Date(signal.createdAt * 1000);
+  }
+  if (signal.created_at) {
+    return new Date(signal.created_at);
+  }
+  return new Date();
+}
+
+function buildActionCardEmbed(signal: DraftSignal): EmbedBuilder {
   const content = signal.content.trim();
-  const maxDescLen = 3800;
+  const maxDescLen = 3200;
   const trimmedContent = content.length > maxDescLen
     ? `${content.slice(0, maxDescLen)}…`
     : content;
@@ -151,37 +181,89 @@ function buildSignalEmbed(signal: DraftSignal, categories: SignalCategories, _st
       }
     } catch {}
   }
-  const createdAt = signal.created_at ? new Date(signal.created_at) : new Date();
+  const createdAt = getTweetCreatedAt(signal);
   const authorName = signal.author.replace(/^@/, '');
+  const borderColor = pipelineColor(signal.pipeline);
 
-  const riskColors: Record<string, number> = { red: 0xf23f43, orange: 0xf0b232, yellow: 0xf0b232 };
-  const borderColor = riskColors[signal.alertLevel || 'none'] ?? 0x23a559;
+  const angle = signal.angle || '';
+  const reason = signal.reason || '';
+  const analysis = reason ? `${angle}\n\n_${reason}_` : angle;
+  const avatarUrl = `https://unavatar.io/twitter/${authorName}`;
 
-  const priority = getPriorityFromConfidence(signal.confidence ?? 0);
-  const score = signal.confidence ?? 0;
-  const risk = signal.riskLevel ? signal.riskLevel.charAt(0).toUpperCase() + signal.riskLevel.slice(1) : 'Low';
-  const sentimentLabel = signal.sentiment
-    ? signal.sentiment.charAt(0).toUpperCase() + signal.sentiment.slice(1)
-    : 'Neutral';
-
-  const separator = '⎯'.repeat(90);
   const description = signal.url
-    ? `${trimmedContent}\n\n[View Tweet](${signal.url})\n\n${separator}`
-    : `${trimmedContent}\n\n${separator}`;
+    ? `${trimmedContent}\n\n[View Tweet →](${signal.url})`
+    : trimmedContent;
+
+
 
   const embed = new EmbedBuilder()
     .setColor(borderColor)
-    .setTitle(`@${authorName} - ${categoryName}`)
+    .setTitle(`@${authorName} - ${pipelineLabel(signal.pipeline)}`)
     .setURL(signal.url || null)
     .setDescription(description)
-    .addFields(
-      { name: 'Priority · Confidence', value: `${priority} · ${score}`, inline: true },
-      { name: 'Risk · Sentiment', value: `${risk} · ${sentimentLabel}`, inline: true },
-      { name: 'Action', value: actionLabel(signal.suggestedAction), inline: true },
-    )
-    .setFooter({ text: `Signal #${signal.id}` })
-    .setTimestamp(createdAt);
+    .setFooter({ text: `Signal #${signal.id} · ${actionLabel(signal.actionType)} • ${formatTweetTime(createdAt)}` });
+  embed.setThumbnail(avatarUrl);
 
+  // Parse metrics from rawJson
+  let authorFollowers: number | undefined;
+  let likes: number | undefined;
+  let retweets: number | undefined;
+  let replies: number | undefined;
+  let views: number | undefined;
+  if (signal.rawJson) {
+    try {
+      const raw = JSON.parse(signal.rawJson);
+      const meta = raw?.metadata ?? raw?.tweet?.metadata ?? {};
+      authorFollowers = typeof meta.authorFollowers === 'number' ? meta.authorFollowers : undefined;
+      likes = typeof meta.likes === 'number' ? meta.likes : undefined;
+      retweets = typeof meta.retweets === 'number' ? meta.retweets : undefined;
+      replies = typeof meta.replies === 'number' ? meta.replies : undefined;
+      views = typeof meta.views === 'number' ? meta.views : undefined;
+    } catch {}
+  }
+
+  const fieldSep = '─'.repeat(32);
+
+  // Field 1: Account info (pipeline-specific label + followers)
+  let accountLabel = 'Account';
+  if (signal.pipeline === 'network' && signal.accountTier) {
+    accountLabel = `Account · Tier ${signal.accountTier}`;
+  } else if (signal.pipeline === 'trends' && signal.connection) {
+    accountLabel = `Account · ${titleCaseCategory(signal.connection)}`;
+  } else if (signal.pipeline === 'crisis' && signal.severity) {
+    accountLabel = `Account · ${titleCaseCategory(signal.severity)}`;
+  }
+  const followersValue = authorFollowers != null && authorFollowers > 0
+    ? `👤 ${formatCount(authorFollowers)} followers`
+    : '—';
+
+  const engagementParts: string[] = [];
+  if (views != null) engagementParts.push(`👁 ${formatCount(views)}`);
+  if (likes != null) engagementParts.push(`❤️ ${formatCount(likes)}`);
+  if (retweets != null) engagementParts.push(`🔁 ${formatCount(retweets)}`);
+  if (replies != null) engagementParts.push(`💬 ${formatCount(replies)}`);
+  const engagementValue = engagementParts.length > 0
+    ? engagementParts.join(' · ')
+    : '—';
+
+  const showEngagement = true;
+  const detailFields: Array<{ name: string; value: string; inline?: boolean }> = [
+    { name: fieldSep, value: '\u200B', inline: false },
+    { name: accountLabel, value: followersValue, inline: true },
+  ];
+  if (showEngagement) {
+    detailFields.push({ name: 'Engagement', value: engagementValue, inline: true });
+  }
+  embed.addFields(detailFields);
+
+  // Analysis section with separator
+  if (analysis) {
+    const maxAnalysisLen = 1000;
+    const truncatedAnalysis = analysis.length > maxAnalysisLen
+      ? analysis.slice(0, maxAnalysisLen - 3) + '...'
+      : analysis;
+    embed.addFields({ name: fieldSep, value: truncatedAnalysis, inline: false });
+  }
   if (imageUrl) {
     embed.setImage(imageUrl);
   }
@@ -192,45 +274,35 @@ function buildSignalEmbed(signal: DraftSignal, categories: SignalCategories, _st
 function buildDraftReplyEmbed(signal: DraftSignal, toneLabel: string, draftText: string): EmbedBuilder {
   const safeDraftText = draftText.replace(/```/g, "'''").trim();
   const authorName = signal.author.replace(/^@/, '');
-  
-  // Truncate original tweet for context (max 200 chars)
-  const originalContent = signal.content.trim();
-  const truncatedOriginal = originalContent.length > 200
-    ? originalContent.slice(0, 197) + '...'
-    : originalContent;
-  
-  // Quote the original tweet with > markdown
-  const quotedOriginal = truncatedOriginal
-    .split('\n')
-    .map(line => `> ${line}`)
-    .join('\n');
-  
+
   // Character count for Twitter's 280 limit
   const charCount = safeDraftText.length;
-  const charIndicator = charCount <= 280 
+  const charIndicator = charCount <= 280
     ? `✅ ${charCount}/280`
     : `⚠️ ${charCount}/280`;
-  
-  const separator = '⎯'.repeat(90);
-  
+
+  // Truncate original tweet for context (max 150 chars)
+  const originalContent = signal.content.trim();
+  const truncatedOriginal = originalContent.length > 150
+    ? originalContent.slice(0, 147) + '...'
+    : originalContent;
+
+  const separator = '─'.repeat(32);
+
+  // Draft text at TOP — clean, no markdown, directly copyable
   const description = [
-    `💬 **@${authorName}** 的原推：`,
-    quotedOriginal,
+    safeDraftText,
     '',
     separator,
-    '',
-    '✍️ **Draft Reply:**',
-    safeDraftText,
+    `💬 Re: @${authorName}`,
+    `> ${truncatedOriginal.split('\n').join('\n> ')}`,
   ].join('\n');
-  
+
   const embed = new EmbedBuilder()
     .setColor(0x1DA1F2)
     .setTitle(`📝 ${toneLabel}`)
     .setDescription(description)
-    .addFields(
-      { name: 'Characters', value: charIndicator, inline: true },
-    )
-    .setFooter({ text: `Signal #${signal.id}` })
+    .setFooter({ text: `${charIndicator} · Signal #${signal.id}` })
     .setTimestamp(new Date());
 
   if (signal.url) {
@@ -273,13 +345,13 @@ async function sendDraftInThread(
   await loadingMsg.edit({ content: '', embeds: [embed] });
 }
 
-function buildToneActionRow(tones: ToneConfig[], signalId: number): ActionRowBuilder<MessageActionRowComponentBuilder> {
+function buildToneActionRow(tones: ToneItem[], signalId: number): ActionRowBuilder<MessageActionRowComponentBuilder> {
   const row = new ActionRowBuilder<MessageActionRowComponentBuilder>();
 
-  tones.forEach((tone, i) => {
+  tones.slice(0, 4).forEach((tone, i) => {
     row.addComponents(
       new ButtonBuilder()
-        .setCustomId(`ma_tone:${i}:${signalId}`)
+        .setCustomId(`ma_tone:${tone.id}:${signalId}`)
         .setLabel(formatToneLabel(tone))
         .setStyle(i === 0 ? ButtonStyle.Success : ButtonStyle.Primary)
     );
@@ -345,6 +417,7 @@ export class DiscordChannel implements Channel {
   private opts: DiscordChannelOpts;
   private botToken: string;
   private contextMap = new Map<string, { context: string; toneInput: string; timestamp: number }>();
+  private trackedSignalMessageIds = new Set<string>();
 
   constructor(botToken: string, opts: DiscordChannelOpts) {
     this.botToken = botToken;
@@ -365,10 +438,10 @@ export class DiscordChannel implements Channel {
         return true;
       }
 
-      const strategies = CATEGORY_STRATEGIES[signal.category] || DEFAULT_STRATEGIES;
-      const toneRow = buildToneActionRow(strategies, signal.id);
+      const tones = parseSignalTones(signal);
+      const toneRow = tones.length > 0 ? buildToneActionRow(tones, signal.id) : buildContextActionRow(signal.id);
       const feedbackRow = buildFeedbackSelectRow(signal.id);
-      const embedVariants = [buildSignalEmbed(signal, SIGNAL_CATEGORIES, 'unified')];
+      const embedVariants = [buildActionCardEmbed(signal)];
 
       for (const embed of embedVariants) {
         await (message.channel as TextChannel).send({
@@ -399,7 +472,7 @@ export class DiscordChannel implements Channel {
           import('../../marketing-agent/notifications/router.js') as Promise<any>,
         ]);
 
-        const signals = dbModule.getUnnotifiedSignals(10);
+        const signals = dbModule.getUnnotifiedSignals(10) as DraftSignal[];
         if (signals.length === 0) return;
 
         const config = configModule.loadConfig();
@@ -415,8 +488,21 @@ export class DiscordChannel implements Channel {
 
         for (const signal of signals) {
           try {
-            const { tier: tierChannelName, action: actionChannelName } = routerModule.resolveTargetChannels(signal, config);
-            const tierChannel = findChannel(tierChannelName);
+            const {
+              tier: tierChannelName,
+              action: actionChannelName,
+              shadow: shadowChannelName,
+            } = routerModule.resolveTargetChannels(signal, config);
+            if (!tierChannelName) {
+              dbModule.markSignalNotified(signal.id);
+              continue;
+            }
+
+            let tierChannel = findChannel(tierChannelName);
+            if (!tierChannel && signal.pipeline === 'trends') {
+              const fallbackChannelName = config.notifications?.needsReplyChannel ?? 'needs-reply';
+              tierChannel = findChannel(fallbackChannelName);
+            }
 
             if (!tierChannel) {
               logger.warn(
@@ -426,21 +512,26 @@ export class DiscordChannel implements Channel {
               continue;
             }
 
-            const embed = buildSignalEmbed(signal, SIGNAL_CATEGORIES, 'unified');
+            const embed = buildActionCardEmbed(signal);
 
             if (signal.url) {
               embed.setURL(signal.url);
             }
 
-            // Post to tier channel (no action buttons - info only)
-            await tierChannel.send({ embeds: [embed] });
+            const needsReplyName = config.notifications?.needsReplyChannel ?? 'needs-reply';
+            const tones = parseSignalTones(signal);
+            const toneRow = tones.length > 0 ? buildToneActionRow(tones, signal.id) : buildContextActionRow(signal.id);
+            const feedbackRow = buildFeedbackSelectRow(signal.id);
+            const shouldAttachToneActions = tierChannelName === needsReplyName;
+            const tierMessage = await tierChannel.send({
+              embeds: [embed],
+              components: shouldAttachToneActions ? [toneRow, feedbackRow] : [feedbackRow],
+            });
+            this.trackedSignalMessageIds.add(tierMessage.id);
 
-            // If action channel exists, post with Generate Reply button (only for needs-reply)
-            if (actionChannelName) {
+            if (actionChannelName && actionChannelName !== tierChannelName) {
               const actionChannel = findChannel(actionChannelName);
               if (actionChannel) {
-                // Only add tone buttons for needs-reply channel; needs-interaction is info-only
-                const needsReplyName = config.notifications?.needsReplyChannel ?? 'needs-reply';
                 const actionEmbed = EmbedBuilder.from(embed);
                 if (actionChannelName === needsReplyName) {
                   actionEmbed.setColor(0x57F287);
@@ -448,18 +539,25 @@ export class DiscordChannel implements Channel {
                   actionEmbed.setColor(0xE67E22);
                 }
                 if (actionChannelName === needsReplyName) {
-                  const tones = getStrategiesForCategory(signal.category, config);
-                  const toneRow = buildToneActionRow(tones, signal.id);
-                  const feedbackRow = buildFeedbackSelectRow(signal.id);
-
-                  const actionEmbeds = [actionEmbed];
-
-                  for (const previewEmbed of actionEmbeds) {
-                    await actionChannel.send({ embeds: [previewEmbed], components: [toneRow, feedbackRow] });
-                  }
+                  const actionMessage = await actionChannel.send({ embeds: [actionEmbed], components: [toneRow, feedbackRow] });
+                  this.trackedSignalMessageIds.add(actionMessage.id);
                 } else {
-                  await actionChannel.send({ embeds: [actionEmbed] });
+                  const actionMessage = await actionChannel.send({ embeds: [actionEmbed], components: [feedbackRow] });
+                  this.trackedSignalMessageIds.add(actionMessage.id);
                 }
+              }
+            }
+
+            if (
+              shadowChannelName
+              && shadowChannelName !== tierChannelName
+              && shadowChannelName !== actionChannelName
+            ) {
+              const shadowChannel = findChannel(shadowChannelName);
+              if (shadowChannel) {
+                const shadowEmbed = EmbedBuilder.from(embed).setColor(0x5865F2);
+                const shadowMessage = await shadowChannel.send({ embeds: [shadowEmbed], components: [feedbackRow] });
+                this.trackedSignalMessageIds.add(shadowMessage.id);
               }
             }
 
@@ -467,7 +565,12 @@ export class DiscordChannel implements Channel {
             dbModule.markSignalNotified(signal.id);
 
             logger.info(
-              { signalId: signal.id, tierChannel: tierChannelName, actionChannel: actionChannelName || 'none' },
+              {
+                signalId: signal.id,
+                tierChannel: tierChannelName,
+                actionChannel: actionChannelName || 'none',
+                shadowChannel: shadowChannelName || 'none',
+              },
               'Signal posted to Discord',
             );
           } catch (err) {
@@ -514,10 +617,9 @@ export class DiscordChannel implements Channel {
       if (!this.client || !this.client.isReady()) return;
 
       try {
-        const [dbModule, configModule, routerModule] = await Promise.all([
+        const [dbModule, configModule] = await Promise.all([
           import('../../marketing-agent/db/index.js') as Promise<any>,
           import('../../marketing-agent/config/loader.js') as Promise<any>,
-          import('../../marketing-agent/notifications/router.js') as Promise<any>,
         ]);
 
         const config = configModule.loadConfig();
@@ -542,13 +644,12 @@ export class DiscordChannel implements Channel {
           return;
         }
 
-        // Group by tier
-        const tierCounts = { red: 0, orange: 0, yellow: 0, none: 0 };
+        const tierCounts = { mentions: 0, network: 0, trends: 0, crisis: 0 };
         for (const s of signals) {
-          if (s.alertLevel === 'red') tierCounts.red++;
-          else if (s.alertLevel === 'orange') tierCounts.orange++;
-          else if (s.alertLevel === 'yellow') tierCounts.yellow++;
-          else tierCounts.none++;
+          if (s.pipeline === 'mentions') tierCounts.mentions++;
+          else if (s.pipeline === 'network') tierCounts.network++;
+          else if (s.pipeline === 'trends') tierCounts.trends++;
+          else if (s.pipeline === 'crisis') tierCounts.crisis++;
         }
 
         const embed = new EmbedBuilder()
@@ -556,10 +657,10 @@ export class DiscordChannel implements Channel {
           .setTitle('📊 Signal Summary - Last 12 Hours')
           .setDescription(`Total signals: ${signals.length}`)
           .addFields(
-            { name: '🔴 Tier 1', value: String(tierCounts.red), inline: true },
-            { name: '🟠 Tier 2', value: String(tierCounts.orange), inline: true },
-            { name: '🟡 Tier 3', value: String(tierCounts.yellow), inline: true },
-            { name: '⚪ Noise', value: String(tierCounts.none), inline: true },
+            { name: '🔵 Mentions', value: String(tierCounts.mentions), inline: true },
+            { name: '🟢 Network', value: String(tierCounts.network), inline: true },
+            { name: '🟣 Trends', value: String(tierCounts.trends), inline: true },
+            { name: '🔴 Crisis', value: String(tierCounts.crisis), inline: true },
           )
           .setTimestamp(new Date());
 
@@ -587,7 +688,50 @@ export class DiscordChannel implements Channel {
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.DirectMessages,
+        GatewayIntentBits.GuildMessageReactions,
       ],
+    });
+
+    this.client.on(Events.MessageReactionAdd, async (reaction: any, user: any) => {
+      if (user?.bot) return;
+
+      try {
+        if (reaction.partial) {
+          await reaction.fetch();
+        }
+        const message = reaction.message as Message;
+        if (!message || !this.trackedSignalMessageIds.has(message.id)) {
+          return;
+        }
+
+        const emoji = reaction.emoji?.name;
+        if (emoji !== '👍' && emoji !== '👎' && emoji !== '🤔') {
+          return;
+        }
+
+        const [dbModule] = await Promise.all([
+          import('../../marketing-agent/db/index.js') as Promise<any>,
+        ]);
+
+        dbModule.logAudit('signal_emoji_reaction', {
+          messageId: message.id,
+          emoji,
+          userId: user.id,
+          username: user.username,
+          channelId: message.channelId,
+        });
+
+        let thread = message.thread;
+        if (!thread) {
+          thread = await message.startThread({
+            name: `Signal Feedback #${message.id.slice(-6)}`,
+            autoArchiveDuration: 60,
+          });
+        }
+        await thread.send(`✅ ${user.username} reacted with ${emoji}. Feedback recorded.`);
+      } catch (err) {
+        logger.error({ err }, 'Failed to process emoji reaction feedback');
+      }
     });
 
     this.client.on(Events.MessageCreate, async (message: Message) => {
@@ -730,21 +874,20 @@ export class DiscordChannel implements Channel {
       const [action, a, b] = customId.split(':');
 
       if (action === 'ma_tone' && interaction.isButton()) {
-        const toneIndex = Number(a);
-        const signalId = Number(b);
-
-        if (!Number.isFinite(toneIndex) || !Number.isFinite(signalId)) {
+        const parsedToneAction = parseToneActionCustomId(customId);
+        if (!parsedToneAction) {
           await interaction.reply({ content: '⚠️ Invalid action.', ephemeral: true }).catch(() => undefined);
           return;
         }
 
+        const { toneId, signalId } = parsedToneAction;
+
         await interaction.deferUpdate();
 
         try {
-          const [dbModule, genModule, configModule] = await Promise.all([
+          const [dbModule, genModule] = await Promise.all([
             import('../../marketing-agent/db/index.js') as Promise<any>,
             import('../../marketing-agent/generator/draft.js') as Promise<any>,
-            import('../../marketing-agent/config/loader.js') as Promise<any>,
           ]);
 
           const signal = dbModule.getSignalById(signalId);
@@ -753,12 +896,11 @@ export class DiscordChannel implements Channel {
             return;
           }
 
-          const config = configModule.loadConfig();
-          const tones = getStrategiesForCategory(signal.category, config);
-          const tone = tones[toneIndex];
-          if (!tone) {
-            await interaction.followUp({ content: '⚠️ Invalid tone.', ephemeral: true }).catch(() => undefined);
-            return;
+          const tones = parseSignalTones(signal);
+          const tone = tones.find((item) => item.id === toneId) ?? tones[0] ?? { id: toneId, label: toneId, description: '' };
+
+          if (!tones.some((item) => item.id === toneId)) {
+            logger.warn({ signalId, toneId }, 'Selected tone not found in current signal tones, falling back');
           }
 
           const contextKey = `${interaction.user.id}:${signalId}`;
@@ -768,7 +910,7 @@ export class DiscordChannel implements Channel {
 
           const signalMessage = interaction.message;
           await sendDraftInThread(signalMessage, signalId, toneLabel, async () => {
-            const draftText = await genModule.generateSingleToneDraft(signal, tone.id, context);
+            const draftText = await genModule.generateSingleToneDraft(signal, tone.id || toneId, context);
             return { embed: buildDraftReplyEmbed(signal, toneLabel, draftText) };
           });
 
@@ -776,7 +918,7 @@ export class DiscordChannel implements Channel {
             this.contextMap.delete(contextKey);
           }
         } catch (err) {
-          logger.error({ err, signalId, toneIndex }, 'Tone handler failed');
+          logger.error({ err, signalId, toneId }, 'Tone handler failed');
           await interaction.followUp({ content: '⚠️ Failed to generate draft.', ephemeral: true }).catch(() => undefined);
         }
         return;
@@ -790,18 +932,15 @@ export class DiscordChannel implements Channel {
         }
 
         try {
-          const [dbModule, configModule] = await Promise.all([
+          const [dbModule] = await Promise.all([
             import('../../marketing-agent/db/index.js') as Promise<any>,
-            import('../../marketing-agent/config/loader.js') as Promise<any>,
           ]);
           const signal = dbModule.getSignalById(signalId);
           if (!signal) {
             await interaction.reply({ content: '⚠️ Signal not found.', ephemeral: true }).catch(() => undefined);
             return;
           }
-          const config = configModule.loadConfig();
-          const tones = getStrategiesForCategory(signal.category, config);
-          const modalTones = tones.length > 0 ? tones : DEFAULT_STRATEGIES;
+          const modalTones = parseSignalTones(signal);
 
           const modal = new ModalBuilder()
             .setCustomId(`ma_ctx_submit:${signalId}`)
@@ -811,7 +950,7 @@ export class DiscordChannel implements Channel {
             .setCustomId('tone_input')
             .setLabel('Tone (optional)')
             .setStyle(TextInputStyle.Short)
-            .setPlaceholder(modalTones.slice(0, 3).map((t) => t.label).join(' / '))
+            .setPlaceholder(modalTones.slice(0, 3).map((t) => t.label).join(' / ') || 'e.g. thoughtful / concise')
             .setRequired(false);
 
           const contextInput = new TextInputBuilder()
@@ -942,10 +1081,9 @@ export class DiscordChannel implements Channel {
         await interaction.deferReply({ ephemeral: true });
 
         try {
-          const [dbModule, genModule, configModule] = await Promise.all([
+          const [dbModule, genModule] = await Promise.all([
             import('../../marketing-agent/db/index.js') as Promise<any>,
             import('../../marketing-agent/generator/draft.js') as Promise<any>,
-            import('../../marketing-agent/config/loader.js') as Promise<any>,
           ]);
 
           const signal = dbModule.getSignalById(signalId);
@@ -954,9 +1092,11 @@ export class DiscordChannel implements Channel {
             return;
           }
 
-          const config = configModule.loadConfig();
-          const tones = getStrategiesForCategory(signal.category, config);
-          const availableTones = tones.length > 0 ? tones : DEFAULT_STRATEGIES;
+          const availableTones = parseSignalTones(signal);
+          if (availableTones.length === 0) {
+            await interaction.editReply({ content: '⚠️ No tones available for this signal.' });
+            return;
+          }
 
           let toneIndex = 0;
           if (toneInput) {

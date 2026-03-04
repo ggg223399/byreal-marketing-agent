@@ -1,19 +1,24 @@
 import { createHash } from 'node:crypto';
+import { getConfigOverride, setConfigOverride } from '../../db/index.js';
 import type { DataSourceAdapter, RawTweet, CollectorConfig } from '../../types/index.js';
-
 const RESPONSES_API_URL = 'https://api.x.ai/v1/responses';
 const MODEL = 'grok-4-1-fast-non-reasoning';
 const RETRY_DELAY_MS = 2000;
 const FETCH_TIMEOUT_MS = 30000;
 const INTER_CALL_DELAY_MS = 2000;
+const POLL_ROUND_DELAY_MS = 1200;
 const MAX_HANDLES_PER_CALL = 10;
+const MAX_POLL_ROUNDS = 4;
+const SAFE_MAX_TWEETS_PER_POLL = 10;
 const DEFAULT_MAX_TWEETS_PER_QUERY = 5;
 const API_MAX_TWEETS_PER_QUERY = 100;
+const MAX_TWEET_AGE_SECONDS = 24 * 60 * 60;
 
 const SYSTEM_PROMPT = `You are a tweet collector. Search X for the requested tweets and return them as a JSON object.
 Return ONLY valid JSON with this schema:
-{"tweets": [{"id": "tweet_id", "author": "@username", "content": "tweet text", "url": "https://x.com/user/status/id", "created_at": "ISO8601 datetime", "image_url": "https://pbs.twimg.com/... or null if no image", "metrics": {"likes": 0, "retweets": 0, "replies": 0, "views": 0}}]}
+{"tweets": [{"id": "tweet_id", "author": "@username", "author_followers": 0, "content": "tweet text", "url": "https://x.com/user/status/id", "created_at": "ISO8601 datetime", "image_url": "https://pbs.twimg.com/... or null if no image", "metrics": {"likes": 0, "retweets": 0, "replies": 0, "views": 0}}]}
 Include image_url only if the tweet has an attached image, otherwise set to null.
+Include author_followers as the approximate follower count of the tweet author. Use 0 if unknown.
 If no tweets found, return {"tweets": []}.
 Do NOT include any explanation, only the JSON object.`;
 
@@ -41,6 +46,7 @@ interface XaiResponsesApiResponse {
 interface XaiTweet {
   id?: string;
   author?: string;
+  author_followers?: number | string;
   content?: string;
   url?: string;
   created_at?: string;
@@ -122,17 +128,68 @@ function mapTweetToRaw(tweet: XaiTweet): RawTweet {
   const url = (tweet.url ?? '').trim() || `https://x.com/${getAuthorForUrl(author)}/status/${id}`;
   const imageUrl = typeof tweet.image_url === 'string' ? tweet.image_url.trim() : undefined;
 
+  const rawFollowers = tweet.author_followers;
+  const parsedFollowers = typeof rawFollowers === 'number'
+    ? rawFollowers
+    : typeof rawFollowers === 'string' && /^\d+$/.test(rawFollowers)
+      ? Number(rawFollowers)
+      : undefined;
+
   return {
     id,
     author,
     content,
     url,
     created_at: toUnixSeconds(tweet.created_at),
+    metrics: {
+      likes: Number(tweet.metrics?.likes ?? 0),
+      retweets: Number(tweet.metrics?.retweets ?? 0),
+      replies: Number(tweet.metrics?.replies ?? 0),
+      views: Number(tweet.metrics?.views ?? 0),
+    },
     metadata: {
       ...(tweet.metrics ?? {}),
       ...(imageUrl ? { imageUrl } : {}),
+      ...(typeof parsedFollowers === 'number' && parsedFollowers > 0
+        ? { authorFollowers: parsedFollowers }
+        : {}),
     },
   };
+}
+
+function stripMarkdownCodeFence(raw: string): string {
+  const trimmed = raw.trim();
+  const fenceMatch = trimmed.match(/^\s*```(?:json)?\s*\n?([\s\S]*?)\n?\s*```\s*$/);
+  return fenceMatch ? fenceMatch[1].trim() : trimmed;
+}
+
+function extractJsonObject(raw: string): string | null {
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start === -1 || end === -1 || end <= start) {
+    return null;
+  }
+  return raw.slice(start, end + 1);
+}
+
+function parseTweetPayload(rawAssistantText: string): XaiTweetPayload {
+  const normalized = stripMarkdownCodeFence(rawAssistantText);
+  const candidates = [normalized, extractJsonObject(normalized)].filter((item): item is string => Boolean(item));
+
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate) as XaiTweetPayload;
+    } catch {}
+  }
+
+  throw new Error('[XaiSearchAdapter] Invalid JSON returned by xAI assistant output.');
+}
+
+function buildPollingPrompt(basePrompt: string, perRoundMax: number, excludeIds: string[]): string {
+  const excluded = excludeIds.length > 0
+    ? ` Exclude these tweet IDs from results: ${excludeIds.slice(0, 50).join(', ')}.`
+    : '';
+  return `${basePrompt} Return up to ${perRoundMax} tweets. Sort results in reverse chronological order (newest first).${excluded}`;
 }
 
 function getAssistantOutputText(response: XaiResponsesApiResponse): string {
@@ -215,33 +272,87 @@ async function fetchResponsesWithRetry(
 
 async function searchWithTool(
   apiKey: string,
-  userPrompt: string,
-  tool: XaiTool
+  basePrompt: string,
+  tool: XaiTool,
+  maxTweetsPerQuery: number
 ): Promise<RawTweet[]> {
-  const response = await fetchResponsesWithRetry(apiKey, userPrompt, tool, 1);
-  if (!response) {
-    return [];
+  const targetMax = normalizeMaxTweetsPerQuery(maxTweetsPerQuery);
+  const maxRounds = Math.max(1, Math.min(MAX_POLL_ROUNDS, Math.ceil(targetMax / SAFE_MAX_TWEETS_PER_POLL) + 1));
+  let perRoundMax = Math.min(targetMax, SAFE_MAX_TWEETS_PER_POLL);
+
+  const seen = new Set<string>();
+  const collected: RawTweet[] = [];
+
+  for (let round = 0; round < maxRounds && collected.length < targetMax; round += 1) {
+    const userPrompt = buildPollingPrompt(basePrompt, perRoundMax, Array.from(seen));
+    const response = await fetchResponsesWithRetry(apiKey, userPrompt, tool, 1);
+    if (!response) {
+      break;
+    }
+
+    const assistantText = getAssistantOutputText(response);
+    let payload: XaiTweetPayload;
+    try {
+      payload = parseTweetPayload(assistantText);
+    } catch {
+      console.warn('[XaiSearchAdapter] Failed to parse assistant JSON payload; reducing round size and retrying.', {
+        perRoundMax,
+        round,
+        rawAssistantText: assistantText.slice(0, 500),
+      });
+
+      if (perRoundMax > 1) {
+        perRoundMax = Math.max(1, Math.floor(perRoundMax / 2));
+        continue;
+      }
+
+      break;
+    }
+
+    const mapped = (payload.tweets ?? [])
+      .map(mapTweetToRaw)
+      .sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0));
+    let added = 0;
+    for (const tweet of mapped) {
+      if (seen.has(tweet.id)) {
+        continue;
+      }
+      seen.add(tweet.id);
+      collected.push(tweet);
+      added += 1;
+
+      if (collected.length >= targetMax) {
+        break;
+      }
+    }
+
+    if (added === 0) {
+      break;
+    }
+
+    const remaining = targetMax - collected.length;
+    perRoundMax = Math.min(remaining, SAFE_MAX_TWEETS_PER_POLL);
+    if (remaining > 0 && round < maxRounds - 1) {
+      await sleep(POLL_ROUND_DELAY_MS);
+    }
   }
 
-  const assistantText = getAssistantOutputText(response);
-
-  let payload: XaiTweetPayload;
-  try {
-    payload = JSON.parse(assistantText) as XaiTweetPayload;
-  } catch {
-    console.warn('[XaiSearchAdapter] Failed to parse assistant JSON payload.', {
-      rawAssistantText: assistantText,
-    });
-    throw new Error('[XaiSearchAdapter] Invalid JSON returned by xAI assistant output.');
-  }
-
-  return (payload.tweets ?? []).map(mapTweetToRaw);
+  return collected.slice(0, targetMax);
 }
 
 export class XaiSearchAdapter implements DataSourceAdapter {
   name = 'xai_search';
 
   async fetchTweets(config: CollectorConfig): Promise<RawTweet[]> {
+    const legacyMonitoring = (config as unknown as {
+      monitoring?: {
+        accountsTier1?: string[];
+        accountsPartners?: string[];
+        keywords?: string[];
+        lastSeenKeyPrefix?: string;
+      };
+    }).monitoring;
+
     const apiKey = config.dataSource.apiKey ?? '';
     if (!apiKey) {
       throw new Error(
@@ -250,16 +361,28 @@ export class XaiSearchAdapter implements DataSourceAdapter {
     }
 
     const maxTweetsPerQuery = normalizeMaxTweetsPerQuery(config.dataSource.maxTweetsPerQuery);
-    const fromDate = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    
+    // Get last_seen timestamp for freshness tracking
+    const defaultFromDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const lastSeenTimestamp = getConfigOverride('last_seen_xai_search');
+    let fromDate = defaultFromDate;
+    
+    if (lastSeenTimestamp) {
+      const lastSeenDate = new Date(parseInt(lastSeenTimestamp, 10) * 1000);
+      // Use the more recent of: 24h ago or last seen timestamp
+      if (lastSeenDate > fromDate) {
+        fromDate = lastSeenDate;
+      }
+    }
 
     const accounts = [
-      ...config.monitoring.accountsTier1,
-      ...config.monitoring.accountsPartners,
+      ...(legacyMonitoring?.accountsTier1 ?? []),
+      ...(legacyMonitoring?.accountsPartners ?? []),
     ]
       .map(toNormalizedHandle)
       .filter(Boolean);
 
-    const keywords = config.monitoring.keywords
+    const keywords = (legacyMonitoring?.keywords ?? [])
       .map(keyword => keyword.trim())
       .filter(Boolean);
 
@@ -267,37 +390,87 @@ export class XaiSearchAdapter implements DataSourceAdapter {
     let callCount = 0;
 
     const accountBatches = chunk(accounts, MAX_HANDLES_PER_CALL);
-    for (const batch of accountBatches) {
+    for (let batchIndex = 0; batchIndex < accountBatches.length; batchIndex++) {
+      const batch = accountBatches[batchIndex];
+      
       if (callCount > 0) {
         await sleep(INTER_CALL_DELAY_MS);
       }
 
-      const prompt = `Find the most recent tweets from the following accounts: ${batch.join(', ')}. Return up to ${maxTweetsPerQuery} tweets.`;
+      // Get batch-specific last_seen timestamp
+      const batchLastSeenKey = `last_seen_accounts_batch_${batchIndex}`;
+      const batchLastSeen = getConfigOverride(batchLastSeenKey);
+      let batchFromDate = fromDate;
+      if (batchLastSeen) {
+        const batchLastSeenDate = new Date(parseInt(batchLastSeen, 10) * 1000);
+        if (batchLastSeenDate > batchFromDate) {
+          batchFromDate = batchLastSeenDate;
+        }
+      }
+
+      const prompt = `Find the most recent tweets from the following accounts: ${batch.join(', ')}.`;
       const tweets = await searchWithTool(apiKey, prompt, {
         type: 'x_search',
         allowed_x_handles: batch,
-        from_date: fromDate,
-      });
+        from_date: batchFromDate.toISOString(),
+      }, maxTweetsPerQuery);
+      
       allTweets.push(...tweets);
       callCount += 1;
+
+      // Update batch-specific last_seen timestamp
+      if (tweets.length > 0) {
+        const maxCreatedAt = Math.max(...tweets.map(t => t.created_at));
+        setConfigOverride(batchLastSeenKey, String(maxCreatedAt));
+      }
     }
 
+    // Keywords query
     if (keywords.length > 0) {
       if (callCount > 0) {
         await sleep(INTER_CALL_DELAY_MS);
       }
 
-      const prompt = `Find the most recent tweets containing these keywords: ${keywords.join(', ')}. Return up to ${maxTweetsPerQuery} tweets.`;
+      // Get keywords-specific last_seen timestamp
+      const keyPrefix = legacyMonitoring?.lastSeenKeyPrefix || 'keywords';
+      const lastSeenKey = `last_seen_${keyPrefix}`;
+      const keywordsLastSeen = getConfigOverride(lastSeenKey);
+      let keywordsFromDate = fromDate;
+      if (keywordsLastSeen) {
+        const keywordsLastSeenDate = new Date(parseInt(keywordsLastSeen, 10) * 1000);
+        if (keywordsLastSeenDate > keywordsFromDate) {
+          keywordsFromDate = keywordsLastSeenDate;
+        }
+      }
+
+      const prompt = `Find the most recent tweets containing these keywords: ${keywords.join(', ')}.`;
       const tweets = await searchWithTool(apiKey, prompt, {
         type: 'x_search',
-        from_date: fromDate,
-      });
+        from_date: keywordsFromDate.toISOString(),
+      }, maxTweetsPerQuery);
+      
       allTweets.push(...tweets);
+
+      // Update keywords last_seen timestamp
+      if (tweets.length > 0) {
+        const maxCreatedAt = Math.max(...tweets.map(t => t.created_at));
+        setConfigOverride(lastSeenKey, String(maxCreatedAt));
+      }
+    }
+
+    // Update global last_seen timestamp
+    if (allTweets.length > 0) {
+      const maxCreatedAt = Math.max(...allTweets.map(t => t.created_at));
+      setConfigOverride('last_seen_xai_search', String(maxCreatedAt));
     }
 
     const seen = new Set<string>();
     const deduped: RawTweet[] = [];
+    const minCreatedAt = Math.floor(Date.now() / 1000) - MAX_TWEET_AGE_SECONDS;
     for (const tweet of allTweets) {
+      if (tweet.created_at < minCreatedAt) {
+        continue;
+      }
       if (!seen.has(tweet.id)) {
         seen.add(tweet.id);
         deduped.push(tweet);

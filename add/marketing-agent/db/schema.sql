@@ -1,17 +1,18 @@
 CREATE TABLE IF NOT EXISTS signals (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  tweet_id TEXT NOT NULL UNIQUE,
+  tweet_id TEXT NOT NULL,
   author TEXT NOT NULL,
   content TEXT NOT NULL,
   url TEXT,
-  category INTEGER NOT NULL CHECK (category BETWEEN 0 AND 8),
-  confidence INTEGER NOT NULL CHECK (confidence BETWEEN 0 AND 100),
-  relevance INTEGER NOT NULL DEFAULT 50,
-  sentiment TEXT,
-  priority INTEGER,
-  risk_level TEXT,
-  suggested_action TEXT,
-  alert_level TEXT NOT NULL CHECK (alert_level IN ('red', 'orange', 'yellow', 'none')),
+  pipeline TEXT NOT NULL CHECK (pipeline IN ('mentions', 'network', 'trends', 'crisis')),
+  pipelines TEXT,
+  action_type TEXT NOT NULL CHECK (action_type IN ('reply', 'qrt', 'like', 'monitor', 'skip', 'statement')),
+  angle TEXT,
+  tones TEXT,  -- JSON array stored as string
+  connection TEXT CHECK (connection IN ('direct', 'indirect', 'stretch') OR connection IS NULL),
+  account_tier TEXT CHECK (account_tier IN ('O', 'S', 'A', 'B', 'C') OR account_tier IS NULL),
+  severity TEXT CHECK (severity IN ('critical', 'high', 'medium') OR severity IS NULL),
+  reason TEXT,
   source_adapter TEXT NOT NULL,
   raw_json TEXT,
   created_at INTEGER NOT NULL DEFAULT (unixepoch()),
@@ -51,10 +52,10 @@ CREATE TABLE IF NOT EXISTS config_overrides (
   updated_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
-CREATE INDEX IF NOT EXISTS idx_signals_alert_level ON signals(alert_level);
-CREATE INDEX IF NOT EXISTS idx_signals_category ON signals(category);
+CREATE INDEX IF NOT EXISTS idx_signals_pipeline ON signals(pipeline);
+CREATE INDEX IF NOT EXISTS idx_signals_action_type ON signals(action_type);
+CREATE INDEX IF NOT EXISTS idx_signals_pipeline_created ON signals(pipeline, created_at);
 CREATE INDEX IF NOT EXISTS idx_signals_created_at ON signals(created_at);
-CREATE INDEX IF NOT EXISTS idx_signals_priority ON signals(priority);
 
 CREATE INDEX IF NOT EXISTS idx_approvals_signal_id ON approvals(signal_id);
 CREATE INDEX IF NOT EXISTS idx_approvals_created_at ON approvals(created_at);

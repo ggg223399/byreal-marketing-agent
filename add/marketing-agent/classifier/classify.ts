@@ -2,99 +2,53 @@ import { readFileSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
+import { buildNarrativeSummary } from "../config/loader.js";
 import { callClaudeText } from "../lib/claude-client.js";
-import { CATEGORY_BY_NAME, SIGNAL_CATEGORIES } from "../types/index.js";
 import type {
-  AlertLevel,
+  ActionType,
   CollectorConfig,
+  Pipeline,
+  PipelineClassificationResult,
   RawTweet,
-  RiskLevel,
-  Sentiment,
-  SignalCategory,
-  SuggestedAction,
+  ToneItem,
 } from "../types/index.js";
-
-export interface ClassificationResult {
-  tweetId: string;
-  category: SignalCategory;
-  confidence: number;
-  relevance: number;
-  sentiment: Sentiment;
-  priority: number;
-  riskLevel: RiskLevel;
-  suggestedAction: SuggestedAction;
-  alertLevel: AlertLevel;
-  reason: string;
-}
 
 const DEFAULT_MODEL = "claude-sonnet-4-5-20250514";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-function loadRules(): string {
-  return readFileSync(path.resolve(__dirname, "../prompts/classification.md"), "utf-8");
+const PIPELINE_ACTION_TYPES: Record<Pipeline, ActionType[]> = {
+  mentions: ["reply", "qrt", "like", "monitor", "skip"],
+  network: ["reply", "qrt", "like", "monitor", "skip"],
+  trends: ["qrt", "reply", "statement", "skip"],
+  crisis: ["statement", "monitor", "skip"],
+};
+
+const TRENDS_CONNECTIONS = ["direct", "indirect", "stretch"] as const;
+const NETWORK_TIERS = ["O", "S", "A", "B", "C"] as const;
+const CRISIS_SEVERITIES = ["critical", "high", "medium"] as const;
+
+function getAllowedNetworkActions(accountTier: (typeof NETWORK_TIERS)[number]): ActionType[] {
+  if (accountTier === "B") {
+    return ["monitor", "skip"];
+  }
+  return ["reply", "qrt", "like", "monitor", "skip"];
 }
 
-function clampConfidence(value: number): number {
-  if (!Number.isFinite(value)) {
-    return 0;
+function loadPipelinePrompt(pipeline: Pipeline, tweets: RawTweet[]): string {
+  const promptFile = path.resolve(__dirname, `../prompts/${pipeline}.md`);
+  let prompt = readFileSync(promptFile, "utf-8");
+  if (pipeline === "trends") {
+    const summary = buildNarrativeSummary();
+    prompt = prompt.replace("{{NARRATIVE_SUMMARY}}", summary);
   }
-  if (value < 0) {
-    return 0;
+  if (pipeline === "network") {
+    const firstTier = tweets[0]?.metadata?.accountTier;
+    const resolvedTier = typeof firstTier === "string" ? firstTier : "unknown";
+    prompt = prompt.replace("{{accountTier}}", resolvedTier);
   }
-  if (value > 100) {
-    return 100;
-  }
-  return Math.round(value);
-}
-
-function clampRelevance(value: number): number {
-  if (!Number.isFinite(value)) {
-    return 50;
-  }
-  if (value < 0) {
-    return 0;
-  }
-  if (value > 100) {
-    return 100;
-  }
-  return Math.round(value);
-}
-
-function isValidCategory(value: unknown): value is SignalCategory {
-  if (typeof value !== 'number' || !Number.isInteger(value)) {
-    return false;
-  }
-
-  return value >= 0 && value <= 8 && value in SIGNAL_CATEGORIES;
-}
-
-function isSentiment(value: unknown): value is Sentiment {
-  return ['positive', 'neutral', 'negative'].includes(value as string);
-}
-
-function isRiskLevel(value: unknown): value is RiskLevel {
-  return ['low', 'medium', 'high'].includes(value as string);
-}
-
-function isSuggestedAction(value: unknown): value is SuggestedAction {
-  return ['qrt_positioning', 'reply_supportive', 'like_only', 'monitor', 'escalate_internal'].includes(value as string);
-}
-
-function normalizePriority(value: unknown): number {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) {
-    return 3;
-  }
-  const rounded = Math.round(numeric);
-  if (rounded < 1) {
-    return 1;
-  }
-  if (rounded > 5) {
-    return 5;
-  }
-  return rounded;
+  return prompt;
 }
 
 function extractJsonArray(raw: string): string {
@@ -111,54 +65,87 @@ function extractJsonArray(raw: string): string {
   return trimmed.slice(start, end + 1);
 }
 
-function parseAndValidate(raw: string): Array<Omit<ClassificationResult, "alertLevel">> {
+function parsePipelineResult(raw: string, pipeline: Pipeline): PipelineClassificationResult[] {
   const parsed = JSON.parse(extractJsonArray(raw));
   if (!Array.isArray(parsed)) {
     throw new Error("LLM response is not an array");
   }
 
-  const allowedCategoryNames = Object.keys(CATEGORY_BY_NAME).join(", ");
-
   return parsed.map((item, index) => {
     const record = item as Record<string, unknown>;
     const tweetId = record.tweetId;
-    const category = Number(record.category);
-    const confidence = Number(record.confidence);
-    const relevance = clampRelevance(Number(record.relevance));
-    const sentiment = record.sentiment;
-    const priority = record.priority;
-    const riskLevel = record.riskLevel;
-    const suggestedAction = record.suggestedAction;
+    const actionType = record.actionType;
+    const angle = record.angle;
+    const tones = record.tones;
+    const connection = record.connection;
+    const accountTier = record.accountTier;
+    const severity = record.severity;
     const reason = record.reason;
 
-    if (typeof tweetId !== "string" || !tweetId) {
+    if (typeof tweetId !== "string" || !tweetId.trim()) {
       throw new Error(`Invalid tweetId at index ${index}`);
     }
-    if (!isValidCategory(category)) {
-      throw new Error(`Invalid category at index ${index}. Expected integer 0-8 (${allowedCategoryNames})`);
+    if (typeof angle !== "string" || !angle.trim()) {
+      throw new Error(`Invalid angle at index ${index}`);
     }
+    // Tolerate missing/excess tones — signal still valuable without tone suggestions
+    const rawTones = Array.isArray(tones) ? tones.slice(0, 3) : [];
+
+    const parsedTones: ToneItem[] = [];
+    for (let toneIndex = 0; toneIndex < rawTones.length; toneIndex++) {
+      const toneRecord = rawTones[toneIndex] as Record<string, unknown>;
+      const id = toneRecord?.id;
+      const label = toneRecord?.label;
+      const description = toneRecord?.description;
+
+      if (typeof id !== "string" || !id.trim()) continue;
+      if (typeof label !== "string" || !label.trim()) continue;
+      if (typeof description !== "string" || !description.trim()) continue;
+
+      parsedTones.push({
+        id: id.trim(),
+        label: label.trim(),
+        description: description.trim(),
+      });
+    }
+
+    if (pipeline === "trends") {
+      if (typeof connection !== "string" || !TRENDS_CONNECTIONS.includes(connection as (typeof TRENDS_CONNECTIONS)[number])) {
+        throw new Error(`Invalid connection at index ${index}`);
+      }
+    }
+
+    if (pipeline === "network") {
+      if (typeof accountTier !== "string" || !NETWORK_TIERS.includes(accountTier as (typeof NETWORK_TIERS)[number])) {
+        throw new Error(`Invalid accountTier at index ${index}`);
+      }
+
+      const allowedActions = getAllowedNetworkActions(accountTier as (typeof NETWORK_TIERS)[number]);
+      if (typeof actionType !== "string" || !allowedActions.includes(actionType as ActionType)) {
+        throw new Error(`Invalid actionType at index ${index} for network tier ${accountTier}`);
+      }
+    } else if (typeof actionType !== "string" || !PIPELINE_ACTION_TYPES[pipeline].includes(actionType as ActionType)) {
+      throw new Error(`Invalid actionType at index ${index} for pipeline ${pipeline}`);
+    }
+
+    if (pipeline === "crisis") {
+      if (typeof severity !== "string" || !CRISIS_SEVERITIES.includes(severity as (typeof CRISIS_SEVERITIES)[number])) {
+        throw new Error(`Invalid severity at index ${index}`);
+      }
+    }
+
     if (typeof reason !== "string" || !reason.trim()) {
       throw new Error(`Invalid reason at index ${index}`);
     }
-    if (!isSentiment(sentiment)) {
-      throw new Error(`Invalid sentiment at index ${index}`);
-    }
-    if (!isRiskLevel(riskLevel)) {
-      throw new Error(`Invalid riskLevel at index ${index}`);
-    }
-    if (!isSuggestedAction(suggestedAction)) {
-      throw new Error(`Invalid suggestedAction at index ${index}`);
-    }
 
     return {
-      tweetId,
-      category,
-      confidence: clampConfidence(confidence),
-      relevance,
-      sentiment,
-      priority: normalizePriority(priority),
-      riskLevel,
-      suggestedAction,
+      tweetId: tweetId.trim(),
+      actionType: actionType as ActionType,
+      angle: angle.trim(),
+      tones: parsedTones,
+      ...(pipeline === "trends" ? { connection: connection as "direct" | "indirect" | "stretch" } : {}),
+      ...(pipeline === "network" ? { accountTier: accountTier as "O" | "S" | "A" | "B" | "C" } : {}),
+      ...(pipeline === "crisis" ? { severity: severity as "critical" | "high" | "medium" } : {}),
       reason: reason.trim(),
     };
   });
@@ -175,59 +162,20 @@ async function callAnthropic(systemPrompt: string, userPrompt: string, model: st
     userPrompt,
     model,
     temperature,
-    maxTokens: 4096,
+    maxTokens: 16384,
   });
 }
 
-export function deriveAlertLevel(category: SignalCategory, confidence: number, relevance: number): AlertLevel {
-  const normalized = clampConfidence(confidence);
-
-  if (relevance < 30 || category === 0) {
-    return 'none';
-  }
-
-  if (category === 8) {
-    return 'red';
-  }
-
-  if (category === 1) {
-    if (normalized > 80) {
-      return 'red';
-    }
-    if (normalized >= 50) {
-      return 'orange';
-    }
-    return 'yellow';
-  }
-
-  if (category === 2) {
-    return 'orange';
-  }
-
-  if (category === 3) {
-    return normalized > 80 ? 'orange' : 'yellow';
-  }
-
-  if (category === 4) {
-    return normalized >= 50 ? 'orange' : 'none';
-  }
-
-  if (category === 5 || category === 6 || category === 7) {
-    return 'yellow';
-  }
-
-  return 'none';
-}
-
-export async function classifyTweets(
+export async function classifyForPipeline(
   tweets: RawTweet[],
-  config: CollectorConfig
-): Promise<ClassificationResult[]> {
+  pipeline: Pipeline,
+  config: CollectorConfig,
+): Promise<PipelineClassificationResult[]> {
   if (tweets.length === 0) {
     return [];
   }
 
-  const systemPrompt = loadRules();
+  const systemPrompt = loadPipelinePrompt(pipeline, tweets);
   const model = config.classification?.model || DEFAULT_MODEL;
   const temperature = config.classification?.temperature ?? 0;
 
@@ -238,16 +186,16 @@ export async function classifyTweets(
     })
     .join("\n");
 
-  const basePrompt = `Classify these ${tweets.length} tweets. Return JSON array with fields: tweetId, category (0-8), confidence (0-100), relevance (0-100), sentiment, priority (1-5), riskLevel, suggestedAction, reason.\n${tweetLines}`;
+  const basePrompt = `Analyze these ${tweets.length} tweets for the ${pipeline} pipeline and return a valid JSON array only.\n${tweetLines}`;
   const retryPrompt = `${basePrompt}\nOnly output valid JSON. Do not include markdown fences or additional text.`;
 
-  let parsed: Array<Omit<ClassificationResult, "alertLevel">>;
+  let parsed: PipelineClassificationResult[];
   try {
     const raw = await callAnthropic(systemPrompt, basePrompt, model, temperature);
-    parsed = parseAndValidate(raw);
+    parsed = parsePipelineResult(raw, pipeline);
   } catch (error) {
     const rawRetry = await callAnthropic(systemPrompt, retryPrompt, model, temperature);
-    parsed = parseAndValidate(rawRetry);
+    parsed = parsePipelineResult(rawRetry, pipeline);
     if (!parsed.length && error instanceof Error) {
       throw error;
     }
@@ -260,7 +208,6 @@ export async function classifyTweets(
     if (!match) {
       throw new Error(`Missing classification for tweet ${tweet.id}`);
     }
-    const alertLevel = deriveAlertLevel(match.category, match.confidence, match.relevance);
-    return { ...match, alertLevel };
+    return match;
   });
 }

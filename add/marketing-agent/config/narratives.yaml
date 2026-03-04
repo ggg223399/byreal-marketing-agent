@@ -1,0 +1,21 @@
+narratives:
+  - tag: "AI x DeFi"
+    keywords: ["AI agent", "automated LP", "AI trading", "DeFAI", "autonomous trading"]
+    description: "AI-powered DeFi tools and agents gaining traction"
+    active: true
+  - tag: "Solana Ecosystem Growth"
+    keywords: ["Solana", "ecosystem", "TVL milestone", "Solana DEX", "Solana DeFi"]
+    description: "Major Solana ecosystem milestones and growth metrics"
+    active: true
+  - tag: "Real World Assets"
+    keywords: ["RWA", "tokenized", "xStocks", "TradFi", "on-chain equities"]
+    description: "Real-world asset tokenization on Solana"
+    active: true
+  - tag: "Solana Perps & Derivatives"
+    keywords: ["perps Solana", "perpetuals Solana", "on-chain perps", "Solana derivatives", "Jupiter perps"]
+    description: "Perpetual futures and derivatives activity on Solana"
+    active: true
+  - tag: "CLMM & Liquidity"
+    keywords: ["CLMM", "concentrated liquidity", "Raydium CLMM", "Orca whirlpool", "liquidity provision"]
+    description: "Concentrated liquidity market making on Solana"
+    active: true

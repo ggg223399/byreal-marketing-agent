@@ -2,7 +2,18 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
-import type { AlertLevel, Approval, ApprovalAction, Signal, SignalCategory } from '../types/index.js';
+import { runMigration } from './migrate.js';
+import type {
+  ActionType,
+  AccountTier,
+  Approval,
+  ApprovalAction,
+  ConnectionStrength,
+  CrisisSeverity,
+  Pipeline,
+  PipelineSignal,
+  ToneItem,
+} from '../types/index.js';
 
 const DEFAULT_DB_PATH = process.env.DB_PATH || 'data/signals.db';
 
@@ -40,6 +51,7 @@ export function getDb(): Database.Database {
 
   const dbPath = process.env.DB_PATH || DEFAULT_DB_PATH;
   ensureParentDir(dbPath);
+  runMigration(dbPath);
   dbInstance = new Database(dbPath);
   dbInstance.pragma('journal_mode = WAL');
   ensureSchema(dbInstance);
@@ -59,14 +71,15 @@ type SignalRow = {
   author: string;
   content: string;
   url: string | null;
-  category: SignalCategory;
-  confidence: number;
-  relevance: number;
-  sentiment: string | null;
-  priority: number | null;
-  risk_level: string | null;
-  suggested_action: string | null;
-  alert_level: AlertLevel;
+  pipeline: Pipeline;
+  pipelines: string | null;
+  action_type: ActionType;
+  angle: string | null;
+  tones: string | null;
+  connection: ConnectionStrength | null;
+  account_tier: AccountTier | null;
+  severity: CrisisSeverity | null;
+  reason: string | null;
   source_adapter: string;
   raw_json: string | null;
   created_at: number;
@@ -83,21 +96,46 @@ type ApprovalRow = {
   created_at: number;
 };
 
-function mapSignal(row: SignalRow): Signal {
+function mapSignal(row: SignalRow): PipelineSignal {
+  let tones: ToneItem[] = [];
+  if (row.tones) {
+    try {
+      const parsed = JSON.parse(row.tones) as unknown;
+      if (Array.isArray(parsed)) {
+        tones = parsed as ToneItem[];
+      }
+    } catch {
+      tones = [];
+    }
+  }
+
+  let pipelines: string[] = [];
+  if (row.pipelines) {
+    try {
+      const parsed = JSON.parse(row.pipelines) as unknown;
+      if (Array.isArray(parsed)) {
+        pipelines = parsed as string[];
+      }
+    } catch {
+      pipelines = [];
+    }
+  }
+
   return {
     id: row.id,
     tweetId: row.tweet_id,
     author: row.author,
     content: row.content,
     url: row.url ?? undefined,
-    category: row.category,
-    confidence: row.confidence,
-    relevance: row.relevance,
-    sentiment: (row.sentiment as Signal['sentiment']) ?? 'neutral',
-    priority: row.priority ?? 3,
-    riskLevel: (row.risk_level as Signal['riskLevel']) ?? 'low',
-    suggestedAction: (row.suggested_action as Signal['suggestedAction']) ?? 'monitor',
-    alertLevel: row.alert_level,
+    pipeline: row.pipeline,
+    pipelines,
+    actionType: row.action_type,
+    angle: row.angle ?? '',
+    tones,
+    connection: row.connection ?? undefined,
+    accountTier: row.account_tier ?? undefined,
+    severity: row.severity ?? undefined,
+    reason: row.reason ?? '',
     sourceAdapter: row.source_adapter,
     rawJson: row.raw_json ?? undefined,
     createdAt: row.created_at,
@@ -122,55 +160,123 @@ export interface InsertSignalInput {
   author: string;
   content: string;
   url?: string;
-  category: SignalCategory;
-  confidence: number;
-  relevance: number;
-  sentiment?: string;
-  priority?: number;
-  riskLevel?: string;
-  suggestedAction?: string;
-  alertLevel: AlertLevel;
+  pipeline: Pipeline;
+  actionType: ActionType;
+  angle?: string;
+  tones?: ToneItem[];
+  connection?: ConnectionStrength;
+  accountTier?: AccountTier;
+  severity?: CrisisSeverity;
+  reason?: string;
   sourceAdapter: string;
   rawJson?: string;
 }
 
-export function insertSignal(input: InsertSignalInput): Signal {
+export function insertSignal(input: InsertSignalInput): PipelineSignal {
   const db = getDb();
-  const result = db
-    .prepare(
-      `INSERT INTO signals
-        (tweet_id, author, content, url, category, confidence, relevance, sentiment, priority, risk_level, suggested_action, alert_level, source_adapter, raw_json)
-       VALUES
-        (@tweetId, @author, @content, @url, @category, @confidence, @relevance, @sentiment, @priority, @riskLevel, @suggestedAction, @alertLevel, @sourceAdapter, @rawJson)`
-    )
-    .run({
-      ...input,
-      url: input.url ?? null,
-      sentiment: input.sentiment ?? null,
-      priority: input.priority ?? null,
-      riskLevel: input.riskLevel ?? null,
-      suggestedAction: input.suggestedAction ?? null,
+
+  // Check if signal with same tweet_id already exists
+  const existing = db.prepare('SELECT * FROM signals WHERE tweet_id = ?').get(input.tweetId) as SignalRow | undefined;
+
+  let pipelinesJson: string;
+  if (existing?.pipelines) {
+    // Merge existing pipelines with new pipeline
+    try {
+      const existingPipelines = JSON.parse(existing.pipelines) as string[];
+      if (!existingPipelines.includes(input.pipeline)) {
+        pipelinesJson = JSON.stringify([...existingPipelines, input.pipeline]);
+      } else {
+        pipelinesJson = existing.pipelines;
+      }
+    } catch {
+      pipelinesJson = JSON.stringify([input.pipeline]);
+    }
+  } else {
+    pipelinesJson = JSON.stringify([input.pipeline]);
+  }
+
+  if (existing) {
+    // Update existing record with merged pipelines
+    db.prepare(
+      `UPDATE signals SET
+        pipeline = @pipeline,
+        pipelines = @pipelines,
+        action_type = @actionType,
+        angle = @angle,
+        tones = @tones,
+        connection = @connection,
+        account_tier = @accountTier,
+        severity = @severity,
+        reason = @reason,
+        source_adapter = @sourceAdapter,
+        raw_json = @rawJson
+       WHERE tweet_id = @tweetId`
+    ).run({
+      tweetId: input.tweetId,
+      pipeline: input.pipeline,
+      pipelines: pipelinesJson,
+      actionType: input.actionType,
+      angle: input.angle ?? null,
+      tones: input.tones ? JSON.stringify(input.tones) : null,
+      connection: input.connection ?? null,
+      accountTier: input.accountTier ?? null,
+      severity: input.severity ?? null,
+      reason: input.reason ?? null,
+      sourceAdapter: input.sourceAdapter,
       rawJson: input.rawJson ?? null,
     });
-
-  const inserted = getSignalById(Number(result.lastInsertRowid));
-  if (!inserted) {
+  } else {
+    // Insert new record
+    db.prepare(
+      `INSERT INTO signals
+        (tweet_id, author, content, url, pipeline, pipelines, action_type, angle, tones, connection, account_tier, severity, reason, source_adapter, raw_json, created_at)
+       VALUES
+        (@tweetId, @author, @content, @url, @pipeline, @pipelines, @actionType, @angle, @tones, @connection, @accountTier, @severity, @reason, @sourceAdapter, @rawJson, @createdAt)`
+    ).run({
+      tweetId: input.tweetId,
+      author: input.author,
+      content: input.content,
+      url: input.url ?? null,
+      pipeline: input.pipeline,
+      pipelines: pipelinesJson,
+      actionType: input.actionType,
+      angle: input.angle ?? null,
+      tones: input.tones ? JSON.stringify(input.tones) : null,
+      connection: input.connection ?? null,
+      accountTier: input.accountTier ?? null,
+      severity: input.severity ?? null,
+      reason: input.reason ?? null,
+      sourceAdapter: input.sourceAdapter,
+      rawJson: input.rawJson ?? null,
+      createdAt: Math.floor(Date.now() / 1000),
+    });
+  // Get the inserted/updated signal
+  const signal = db.prepare('SELECT * FROM signals WHERE tweet_id = ?').get(input.tweetId) as SignalRow | undefined;
+  if (!signal) {
     throw new Error('Failed to fetch inserted signal');
   }
-  return inserted;
+  return mapSignal(signal);
 }
 
-export function getSignalById(id: number): Signal | null {
+  // Get the inserted/updated signal
+  const signal = db.prepare('SELECT * FROM signals WHERE tweet_id = ?').get(input.tweetId) as SignalRow | undefined;
+  if (!signal) {
+    throw new Error('Failed to fetch inserted signal');
+  }
+  return mapSignal(signal);
+}
+
+export function getSignalById(id: number): PipelineSignal | null {
   const db = getDb();
   const row = db.prepare('SELECT * FROM signals WHERE id = ?').get(id) as SignalRow | undefined;
   return row ? mapSignal(row) : null;
 }
 
-export function getPendingSignals(limit = 10): Signal[] {
+export function getPendingSignals(limit = 10): PipelineSignal[] {
   const db = getDb();
   const rows = db
     .prepare(
-      `SELECT s.*
+      `SELECT s.id, s.tweet_id, s.author, s.content, s.url, s.pipeline, s.pipelines, s.action_type, s.angle, s.tones, s.connection, s.account_tier, s.severity, s.reason, s.source_adapter, s.raw_json, s.created_at, s.notified_at
        FROM signals s
        LEFT JOIN approvals a ON a.signal_id = s.id
        WHERE a.id IS NULL
@@ -182,25 +288,38 @@ export function getPendingSignals(limit = 10): Signal[] {
   return rows.map(mapSignal);
 }
 
-export function getUnnotifiedSignals(limit = 20): Signal[] {
+export function getUnnotifiedSignals(limit = 20): PipelineSignal[] {
   const db = getDb();
   const rows = db
     .prepare(
-      `SELECT id, tweet_id, author, content, url, category, confidence, relevance, sentiment, priority, risk_level, suggested_action, alert_level, source_adapter, raw_json, created_at, notified_at
+      `SELECT id, tweet_id, author, content, url, pipeline, pipelines, action_type, angle, tones, connection, account_tier, severity, reason, source_adapter, raw_json, created_at, notified_at
        FROM signals WHERE notified_at IS NULL ORDER BY created_at ASC LIMIT ?`
     )
     .all(limit) as SignalRow[];
 
   return rows.map(mapSignal);
 }
-export function getSignalsSince(epochSeconds: number): Signal[] {
+
+export function getSignalsSince(epochSeconds: number): PipelineSignal[] {
   const db = getDb();
   const rows = db
     .prepare(
-      `SELECT id, tweet_id, author, content, url, category, confidence, relevance, sentiment, priority, risk_level, suggested_action, alert_level, source_adapter, raw_json, created_at, notified_at
+      `SELECT id, tweet_id, author, content, url, pipeline, pipelines, action_type, angle, tones, connection, account_tier, severity, reason, source_adapter, raw_json, created_at, notified_at
        FROM signals WHERE created_at > ? ORDER BY created_at DESC`
     )
     .all(epochSeconds) as SignalRow[];
+
+  return rows.map(mapSignal);
+}
+
+export function getSignalsByPipeline(pipeline: Pipeline, limit = 20): PipelineSignal[] {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `SELECT id, tweet_id, author, content, url, pipeline, pipelines, action_type, angle, tones, connection, account_tier, severity, reason, source_adapter, raw_json, created_at, notified_at
+       FROM signals WHERE pipeline = ? ORDER BY created_at DESC LIMIT ?`
+    )
+    .all(pipeline, limit) as SignalRow[];
 
   return rows.map(mapSignal);
 }

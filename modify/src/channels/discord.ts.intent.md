@@ -1,63 +1,27 @@
-# Intent: src/channels/discord.ts modifications
+# discord.ts — Marketing Agent Integration
 
-## What changed
-Replaced the generic NanoClaw DiscordChannel with a marketing-specific version that adds:
-- Signal polling (30s interval) from SQLite DB -> Discord channel routing
-- Per-category contextual tone buttons on signal embeds (CATEGORY_BUTTONS mapping for categories 1-8)
-- Draft generation flow (tone button -> thread-based draft)
-- Periodic summary scheduling (9AM + 6PM SGT)
-- Color-coded embeds (green=needs-reply, orange=needs-interaction, blue=tier)
-- Feedback dropdown on ALL channels (tier, needs-reply, needs-interaction)
-- Context modal for custom tone/context input
-- `draft reply #N` text command from any channel
+## What this modifies
 
-## Key sections
-- Imports: discord.js, better-sqlite3, marketing-agent modules
-- SIGNAL_CATEGORIES: 8 category definitions with emojis
-- buildSignalEmbed: unified signal card layout
-  - Title: `@author - Category` with hyperlink (no emoji, no ID)
-  - Fields: Priority·Confidence and Risk·Sentiment (2 inline pairs)
-  - Footer: `Signal #ID` with timestamp
-  - Content: tweet text + View Tweet link + separator line
-- buildDraftReplyEmbed: draft embed with tone label and generated reply
-- buildToneActionRow: 5 buttons in one row (4 tones + Context button)
-- buildFeedbackSelectRow: signal feedback dropdown (Not Relevant, Wrong Category, etc.)
-- buildProcessedSignalEmbed: greyed-out embed after feedback submitted
-- DiscordChannel class: implements Channel interface with marketing features
-- Signal polling loop: checks DB for unnotified signals
-- Button interaction handler: tone selection -> draft generation
-- Summary scheduler: cron-like scheduling for periodic summaries
-- Emoji stripping: space-based split for cleaning author names
+`src/channels/discord.ts` — the NanoClaw Discord channel handler.
 
-## UI Changes (Latest)
-### Signal Embed Layout
-- **Title**: `@author - Category` with hyperlink (clean, no emoji, no ID)
-- **Fields**: 
-  - Priority · Confidence (inline)
-  - Risk · Sentiment (inline)
-- **Footer**: `Signal #ID` with timestamp
-- **Body**: Tweet content + [View Tweet] link + separator line
-- **Color**: Based on alert level (red/orange/yellow/none -> green border)
+## Changes from base NanoClaw
 
-### Button Layout
-- **Single row with 5 buttons** (4 tone buttons + Context button)
-- First tone button highlighted green (ButtonStyle.Success)
-- Context button uses ButtonStyle.Secondary
+This file extends the base Discord channel with marketing-agent specific features:
 
-### Draft Embed
-- Twitter blue color (0x1DA1F2)
-- Author info with hyperlink
-- Safe draft text (backticks escaped)
-- Footer: `Draft Reply · {toneLabel} · #{signalId}`
+1. **Signal Action Cards** — Embeds for marketing signals with pipeline-colored borders, tweet content, author info, angle/reason analysis, and tweet images
+2. **Tone Selection Buttons** — Per-signal tone buttons (e.g., Helpful Expert, Friendly Peer) that trigger AI draft generation
+3. **Draft Reply Threading** — AI-generated reply drafts posted as thread replies to the original signal card
+4. **Approval Workflow UI** — Approve/Edit/Reject buttons on draft messages with modal editing support
+5. **Pipeline-aware Routing** — Color coding and channel routing based on signal pipeline (mentions/network/trends/crisis)
+6. **Marketing Signal Types** — Imports `ActionType`, `Pipeline`, `PipelineSignal`, `ToneItem` from `marketing-agent/types/`
 
-## Invariants
-- Still implements the Channel interface (name, connect, sendMessage, disconnect)
-- Still handles message routing via onMessage callback
-- Still supports trigger pattern matching for registered groups
-- Preserves all base Discord functionality (connect, auth, message send/receive)
+## Key additions vs base discord.ts
 
-## Must-keep
-- Channel interface compliance
-- Trigger pattern support
-- Message content intent handling
-- Graceful disconnect
+- `DraftSignal` type extending `PipelineSignal`
+- `buildActionCardEmbed()` — signal card embed builder
+- `buildToneButtons()` — tone selection row builder
+- `parseSignalTones()` — normalize tone data from DB/JSON
+- `parseToneActionCustomId()` — parse `ma_tone:{toneId}:{signalId}` button IDs
+- `pipelineColor()` — color mapping for pipeline types
+- `getTweetCreatedAt()` — extract tweet timestamp from various formats
+- Interaction handlers for tone selection, approval, editing, rejection

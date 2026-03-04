@@ -3,6 +3,8 @@
 ## About Byreal
 Byreal is a Solana-native DEX focused on real assets and real liquidity, incubated by Bybit. Within just six months of launch, Byreal surpassed $2B in cumulative trading volume and is now ranked Top 10 among Solana DEXs by TVL, as well as Top 5 by 30-day revenue and 30-day fees, according to DeFiLlama.
 
+- **Emily Rio Freeman** (@emilyRioFreeman): Byreal co-founder. Tweets from her account represent the project's voice and vision.
+
 ## Key Achievements
 - First DEX to launch assets such as Moonbirds, Seeker, and FIGHT — ranked #1 among Solana DEXs on day one of their respective listings
 - Actively identifies and supports trending Solana meme assets (e.g. WhiteWhale), which have since been listed across Byreal, Bybit Alpha, and Bybit Spot
@@ -25,6 +27,7 @@ _Note: Metrics are approximate and should be updated periodically. Source: https
 - **OutSmart CLI**: byreal-clmm adapter in production-grade Solana trading CLI (565+ stars)
 - **Pinax Substreams**: CLMM instruction parsing + account parsers with full test coverage
 - **SendAI Skills**: Byreal as 1 of 18 DEX adapters for Solana DeFi agents (49 MCP tools)
+**Aggregations**: Byreal integrated by most of the major aggregators on Solana, including Jupiter, dFlow, titan, OKX and more
 
 ## Links
 - Website: https://byreal.io

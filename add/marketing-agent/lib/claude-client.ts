@@ -1,4 +1,6 @@
 import { spawn } from 'child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 
 interface CallClaudeTextOptions {
   systemPrompt: string;
@@ -6,6 +8,28 @@ interface CallClaudeTextOptions {
   model: string;
   temperature: number;
   maxTokens: number;
+}
+
+function readSecret(key: string): string | undefined {
+  if (process.env[key]) return process.env[key];
+  try {
+    const envFile = path.join(process.cwd(), '.env');
+    const content = fs.readFileSync(envFile, 'utf-8');
+    for (const line of content.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eqIdx = trimmed.indexOf('=');
+      if (eqIdx === -1) continue;
+      const k = trimmed.slice(0, eqIdx).trim();
+      if (k !== key) continue;
+      let v = trimmed.slice(eqIdx + 1).trim();
+      if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+        v = v.slice(1, -1);
+      }
+      return v || undefined;
+    }
+  } catch {}
+  return undefined;
 }
 
 function normalizeModelForClaudeCli(model: string): string {
@@ -32,7 +56,7 @@ function extractJsonObject(raw: string): string {
 }
 
 async function callViaClaudeCli(opts: CallClaudeTextOptions): Promise<string> {
-  const oauthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  const oauthToken = readSecret('CLAUDE_CODE_OAUTH_TOKEN');
   if (!oauthToken) {
     throw new Error('CLAUDE_CODE_OAUTH_TOKEN is required for Claude CLI mode');
   }
@@ -101,7 +125,7 @@ async function callViaClaudeCli(opts: CallClaudeTextOptions): Promise<string> {
 }
 
 async function callViaAnthropicApi(opts: CallClaudeTextOptions): Promise<string> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = readSecret('ANTHROPIC_API_KEY');
   if (!apiKey) {
     throw new Error('ANTHROPIC_API_KEY is required for direct API mode');
   }
@@ -130,10 +154,10 @@ async function callViaAnthropicApi(opts: CallClaudeTextOptions): Promise<string>
 }
 
 export async function callClaudeText(opts: CallClaudeTextOptions): Promise<string> {
-  if (process.env.CLAUDE_CODE_OAUTH_TOKEN) {
+  if (readSecret('CLAUDE_CODE_OAUTH_TOKEN')) {
     return callViaClaudeCli(opts);
   }
-  if (process.env.ANTHROPIC_API_KEY) {
+  if (readSecret('ANTHROPIC_API_KEY')) {
     return callViaAnthropicApi(opts);
   }
   throw new Error('Missing Claude credentials. Set CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY');

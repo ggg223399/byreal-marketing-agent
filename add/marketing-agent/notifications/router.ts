@@ -1,5 +1,4 @@
-import { SIGNAL_CATEGORIES } from '../types/index.js';
-import type { CollectorConfig, Signal } from '../types/index.js';
+import type { ActionType, CollectorConfig, Pipeline, PipelineSignal } from '../types/index.js';
 
 type DiscordEmbedField = {
   name: string;
@@ -22,7 +21,7 @@ type DiscordWebhookPayload = {
   embeds: DiscordEmbed[];
 };
 
-async function sendWebhook(webhookUrl: string, payload: DiscordWebhookPayload): Promise<void> {
+export async function sendWebhook(webhookUrl: string, payload: DiscordWebhookPayload): Promise<void> {
   const response = await fetch(webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -35,76 +34,53 @@ async function sendWebhook(webhookUrl: string, payload: DiscordWebhookPayload): 
   }
 }
 
-function levelEmoji(level: Signal['alertLevel']): string {
-  if (level === 'red') return '🔴';
-  if (level === 'orange') return '🟠';
-  if (level === 'yellow') return '🟡';
-  return '⚪';
+function pipelineLabel(pipeline: Pipeline): string {
+  if (pipeline === 'mentions') return 'Mentions';
+  if (pipeline === 'network') return 'Network';
+  if (pipeline === 'trends') return 'Trends';
+  return 'Crisis';
 }
 
-function levelColor(level: Signal['alertLevel']): number {
-  if (level === 'red') return 0xff0000;
-  if (level === 'orange') return 0xff8c00;
-  if (level === 'yellow') return 0xffd700;
-  return 0x95a5a6;
+export function pipelineEmoji(pipeline: Pipeline): string {
+  if (pipeline === 'mentions') return '🔵';
+  if (pipeline === 'network') return '🟢';
+  if (pipeline === 'trends') return '🟣';
+  return '🔴';
 }
 
-function toTitleCase(value: string): string {
-  return value
-    .split('_')
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
+export function pipelineColor(pipeline: Pipeline): number {
+  if (pipeline === 'mentions') return 0x3498DB;
+  if (pipeline === 'network') return 0x2ECC71;
+  if (pipeline === 'trends') return 0x9B59B6;
+  return 0xE74C3C;
 }
 
-function sentimentLabel(sentiment: Signal['sentiment']): string {
-  if (sentiment === 'positive') return '📈 Positive';
-  if (sentiment === 'negative') return '📉 Negative';
-  return '➡️ Neutral';
-}
-
-function priorityLabel(priority: number): string {
-  if (priority <= 1) return '🔴 P1';
-  if (priority === 2) return '🟠 P2';
-  if (priority === 3) return '🟡 P3';
-  if (priority === 4) return '⚪ P4';
-  return '⚪ P5';
-}
-
-function riskLabel(risk: Signal['riskLevel']): string {
-  if (risk === 'high') return '🔴 High';
-  if (risk === 'medium') return '🟠 Medium';
-  return '🟢 Low';
-}
-
-function actionLabel(action: Signal['suggestedAction']): string {
-  if (action === 'qrt_positioning') return '📢 **Quote Tweet**';
-  if (action === 'reply_supportive') return '💬 **Reply** · Supportive';
-  if (action === 'like_only') return '👍 **Like Only**';
-  if (action === 'monitor') return '👀 **Monitor**';
-  return '🚨 **Escalate** · Internal';
+export function actionTypeLabel(actionType: ActionType): string {
+  if (actionType === 'reply') return 'Reply';
+  if (actionType === 'qrt') return 'Quote Tweet';
+  if (actionType === 'statement') return 'Statement';
+  if (actionType === 'like') return 'Like';
+  if (actionType === 'monitor') return 'Monitor';
+  return 'Skip';
 }
 
 
-export function formatSignalForDiscord(signal: Signal): DiscordWebhookPayload {
-  const categoryName = SIGNAL_CATEGORIES[signal.category] ?? 'unknown_category';
-  const titleCategory = toTitleCase(categoryName);
+export function formatSignalForDiscord(signal: PipelineSignal): DiscordWebhookPayload {
   const content = signal.content.replace(/\s+/g, ' ').trim().slice(0, 280);
 
   return {
     embeds: [
       {
-        color: levelColor(signal.alertLevel),
-        title: `${levelEmoji(signal.alertLevel)} #${signal.id} — ${titleCategory}`,
+        color: pipelineColor(signal.pipeline),
+        title: `${pipelineEmoji(signal.pipeline)} #${signal.id} — ${pipelineLabel(signal.pipeline)}`,
         description: content,
         url: signal.url,
         fields: [
           { name: 'Author', value: `[${signal.author}](https://x.com/${signal.author.replace(/^@/, '')})`, inline: true },
-          { name: 'Category', value: `${signal.category} — ${titleCategory}`, inline: true },
-          { name: 'Alert Confidence', value: `${signal.confidence}%`, inline: true },
-          { name: 'Sentiment', value: sentimentLabel(signal.sentiment), inline: true },
-          { name: 'Priority', value: priorityLabel(signal.priority), inline: true },
-          { name: 'Risk', value: riskLabel(signal.riskLevel), inline: true },
-          { name: 'Action', value: actionLabel(signal.suggestedAction), inline: false },
+          { name: 'Pipeline', value: pipelineLabel(signal.pipeline), inline: true },
+          { name: 'Action', value: actionTypeLabel(signal.actionType), inline: true },
+          { name: 'Angle', value: signal.angle || 'N/A', inline: false },
+          { name: 'Reason', value: signal.reason || 'N/A', inline: false },
         ],
         footer: { text: `Signal · ${new Date(signal.createdAt * 1000).toLocaleString('en-US', { timeZone: 'Asia/Shanghai' })}` },
         timestamp: new Date(signal.createdAt * 1000).toISOString(),
@@ -114,45 +90,74 @@ export function formatSignalForDiscord(signal: Signal): DiscordWebhookPayload {
 }
 
 export interface TargetChannels {
-  tier: string;
+  tier?: string;
   action?: string;
+  shadow?: string;
 }
 
-export function resolveTargetChannels(signal: Signal, config: CollectorConfig): TargetChannels {
-  const tier1 = config.notifications.tier1Channel ?? 'tier1-signals';
-  const tier2 = config.notifications.tier2Channel ?? 'tier2-signals';
-  const tier3 = config.notifications.tier3Channel ?? 'tier3-signals';
-  const noise = config.notifications.noiseChannel ?? 'noise';
-
-  if (signal.category === 0) {
-    return { tier: noise };
-  }
-  
-  let tier: string;
-  if (signal.alertLevel === 'red') {
-    tier = tier1;
-  } else if (signal.alertLevel === 'orange') {
-    tier = tier2;
-  } else if (signal.alertLevel === 'yellow') {
-    tier = tier3;
-  } else {
-    tier = noise;
-  }
-  
+export function resolveTargetChannels(signal: PipelineSignal, config: CollectorConfig): TargetChannels {
+  let tier: string | undefined;
   let action: string | undefined;
   const needsReply = config.notifications.needsReplyChannel ?? 'needs-reply';
   const needsInteraction = config.notifications.needsInteractionChannel ?? 'needs-interaction';
-  
-  if (signal.suggestedAction === 'reply_supportive' || signal.suggestedAction === 'qrt_positioning') {
-    action = needsReply;
-  } else if (signal.suggestedAction === 'like_only' || signal.suggestedAction === 'escalate_internal') {
-    action = needsInteraction;
+  const tier1 = config.notifications.tier1Channel ?? 'tier1-signals';
+  const tier2 = config.notifications.tier2Channel ?? 'tier2-signals';
+  const tier3 = config.notifications.tier3Channel ?? 'tier3-signals';
+  const ownActivity = config.notifications.ownActivityChannel ?? 'own-activity';
+  const competitorIntel = config.notifications.competitorIntelChannel ?? 'competitor-intel';
+
+  const noiseChannel = config.notifications.noiseChannel ?? 'noise';
+  const isInteractive = signal.actionType === 'reply' || signal.actionType === 'qrt' || signal.actionType === 'statement';
+
+  if (isInteractive) {
+    if (signal.pipeline === 'network') {
+      action = needsInteraction;
+      tier = needsInteraction;
+    } else {
+      action = needsReply;
+      tier = needsReply;
+    }
+    return { tier, action };
   }
-  
-  return { tier, action };
+
+  if (signal.actionType === 'skip') {
+    if (signal.pipeline === 'network' && signal.accountTier === 'O') {
+      return { tier: ownActivity };
+    }
+    return { tier: noiseChannel };
+  }
+
+  if (signal.pipeline === 'network') {
+    if (signal.accountTier === 'O') tier = ownActivity;
+    else if (signal.accountTier === 'S') tier = tier1;
+    else if (signal.accountTier === 'A') tier = tier2;
+    else if (signal.accountTier === 'B') tier = signal.actionType === 'monitor' ? competitorIntel : tier3;
+    else if (signal.accountTier === 'C') tier = tier3;
+    else tier = noiseChannel;
+  } else if (signal.pipeline === 'trends') {
+    if (signal.connection === 'direct') tier = tier1;
+    else if (signal.connection === 'indirect') tier = tier2;
+    else if (signal.connection === 'stretch') tier = tier3;
+    else tier = noiseChannel;
+  } else if (signal.pipeline === 'crisis') {
+    if (signal.severity === 'critical') tier = tier1;
+    else if (signal.severity === 'high') tier = tier2;
+    else if (signal.severity === 'medium') tier = tier3;
+    else tier = noiseChannel;
+  } else if (signal.pipeline === 'mentions') {
+    if (signal.actionType === 'like' || signal.actionType === 'monitor') {
+      tier = needsInteraction;
+    } else {
+      tier = tier2;
+    }
+  } else {
+    tier = tier3;
+  }
+
+  return { tier };
 }
 
-export function resolveChannelName(signal: Signal, config: CollectorConfig): string {
+export function resolveChannelName(signal: PipelineSignal, config: CollectorConfig): string {
   const { tier } = resolveTargetChannels(signal, config);
-  return tier;
+  return tier ?? '';
 }

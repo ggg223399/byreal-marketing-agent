@@ -1,6 +1,5 @@
 import { callClaudeText } from '../lib/claude-client.js';
-import { SIGNAL_CATEGORIES } from '../types/index.js';
-import type { DraftTone, Signal } from '../types/index.js';
+import type { DraftTone, PipelineSignal, ToneItem } from '../types/index.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -26,7 +25,7 @@ function readSecret(key: string): string | undefined {
   return undefined;
 }
 
-const MODEL = 'claude-3-5-haiku-20241022';
+const MODEL = 'claude-sonnet-4-5-20250514';
 const TEMPERATURE = 0.7;
 
 let cachedBrandContext: string | null = null;
@@ -64,7 +63,7 @@ function extractJsonObject(raw: string): string {
   return trimmed.slice(start, end + 1);
 }
 
-function buildSystemPrompt(brandContextPath?: string): string {
+function buildSystemPrompt(signal: PipelineSignal, selectedTone: ToneItem, brandContextPath?: string): string {
   const brandContext = loadBrandContext(brandContextPath);
   const parts: string[] = [];
   
@@ -76,33 +75,18 @@ function buildSystemPrompt(brandContextPath?: string): string {
     'You write social media replies for Byreal, a DeFi/Web3 trading platform.',
     'Produce concise, brand-safe replies under 280 characters each.',
     'Do not overpromise. Do not mention private or unverifiable facts.',
-    'Return strict JSON only.',
+    'Return the reply as plain text. No JSON. No markdown.',
     '',
-    'Strategy guide (generate reply matching the strategy):',
-    '- thank_support: Warmly thank and acknowledge. Show genuine appreciation.',
-    '- add_detail: Add specific product features, data points, or context about Byreal.',
-    '- invite_try: Friendly invitation to try specific Byreal features. Include concrete value prop.',
-    '- data_compare: Present objective data comparison. Use numbers and facts.',
-    '- differentiate: Highlight what makes Byreal unique. Concrete advantages over alternatives.',
-    '- objective_take: Professional, balanced analysis. Acknowledge strengths of others too.',
-    '- share_insight: Share a valuable market insight or perspective. Be informative.',
-    '- offer_solution: Propose a practical solution or approach. Be actionable.',
-    '- show_interest: Express genuine interest and engagement. Ask smart follow-up questions.',
-    '- add_data: Supplement with relevant data points. Be precise.',
-    '- trend_analysis: Interpret trends and their implications. Forward-looking.',
-    '- team_perspective: Share team viewpoint. Authentic insider perspective.',
-    '- positive_engage: Enthusiastic, positive engagement. Celebrate the news/development.',
-    '- collab_intent: Express collaboration interest. Be specific about potential synergies.',
-    '- share_progress: Share Byreal related progress. Concrete updates.',
-    '- industry_insight: Deep industry knowledge. Thought leadership.',
-    '- tech_vision: Technical perspective on the topic. Expert-level.',
-    '- express_interest: Express strategic interest. Show Byreal is paying attention.',
-    '- expert_analysis: Professional expert analysis. Authoritative.',
-    '- compliance_view: Compliance/regulatory angle. Thoughtful and measured.',
-    '- market_view: Market perspective. Data-informed opinion.',
-    '- safety_alert: Safety awareness. Responsible, helpful, not alarmist.',
-    '- fact_clarify: Clarify facts objectively. Evidence-based.',
-    '- official_response: Official Byreal response. Measured, authoritative, transparent.',
+    `Signal pipeline: ${signal.pipeline}`,
+    `Signal action type: ${signal.actionType}`,
+    `Signal angle: ${signal.angle}`,
+    'LLM-recommended tones (JSON array):',
+    JSON.stringify(signal.tones, null, 2),
+    '',
+    'You MUST follow this selected tone exactly:',
+    JSON.stringify(selectedTone, null, 2),
+    '',
+    'Use the selected tone description to shape wording, specificity, and call-to-action.',
   );
   
   return parts.join('\n');
@@ -115,8 +99,12 @@ function parseSingleToneText(raw: string): string {
     throw new Error('Empty single-tone draft response');
   }
 
-  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+  // Strip markdown code fences first (e.g. ```json\n{...}\n```)
+  const fenceMatch = trimmed.match(/^\s*```(?:json)?\s*\n?([\s\S]*?)\n?\s*```\s*$/);
+  const stripped = fenceMatch ? fenceMatch[1].trim() : trimmed;
+
+  if (stripped.startsWith('{') && stripped.endsWith('}')) {
+    const parsed = JSON.parse(stripped) as Record<string, unknown>;
     const text = parsed.text;
     if (typeof text === 'string' && text.trim()) {
       return text.trim();
@@ -124,44 +112,52 @@ function parseSingleToneText(raw: string): string {
     throw new Error('Single-tone JSON response missing text');
   }
 
-  return trimmed;
+  return stripped;
 }
 
-function fallbackSingleToneDraft(signal: Signal, strategy: string): string {
+function fallbackSingleToneDraft(signal: PipelineSignal, strategy: string): string {
   const author = signal.author;
-  const strategyFallbacks: Record<string, string> = {
-    thank_support: `Thanks for the mention, @${author}! We really appreciate the support. Let us know if there's anything we can help with.`,
-    add_detail: `@${author} Great point! Byreal's concentrated liquidity pools offer tighter spreads and better capital efficiency for active LPs.`,
-    invite_try: `@${author} You should check out Byreal's Real Farmer feature - social copy-LP that makes DeFi accessible. Would love your feedback!`,
-    data_compare: `Interesting data, @${author}. On Byreal we're seeing strong LP returns with concentrated liquidity - happy to share specifics.`,
-    differentiate: `@${author} What sets Byreal apart: CLMM with social copy-LP, Bybit Alpha integration, and optimized new asset launches on Solana.`,
-    objective_take: `Good analysis, @${author}. The landscape is evolving fast - Byreal's approach focuses on capital efficiency and LP experience.`,
-    share_insight: `@${author} Our take: this signals growing demand for efficient liquidity solutions on Solana. Exciting times ahead.`,
-    offer_solution: `@${author} Byreal can help here - our CLMM pools are designed exactly for this use case. Happy to walk you through it.`,
-    show_interest: `Really interesting development, @${author}. We're watching this closely at Byreal. What's your take on the next steps?`,
-    safety_alert: `@${author} Important reminder to stay vigilant. Always verify contract addresses and use trusted platforms.`,
-    fact_clarify: `@${author} To clarify the facts here - happy to provide specific data points from Byreal's side.`,
-    official_response: `@${author} Thanks for raising this. Here's Byreal's position: we prioritize transparency and user safety above all.`,
-  };
-  return strategyFallbacks[strategy] || `Thanks for sharing, @${author}. Interesting perspective - the Byreal team is paying attention.`;
+  if (signal.pipeline === 'mentions') {
+    return `Thanks for the mention, @${author}. We appreciate it and are glad to see this conversation around ${signal.angle}.`;
+  }
+  if (signal.pipeline === 'network') {
+    return `@${author} Great point. On Byreal we're focused on practical execution for ${signal.angle}, happy to share details if useful.`;
+  }
+  if (signal.pipeline === 'trends') {
+    return `@${author} Interesting trend. We're watching ${signal.angle} closely and thinking through where it creates real user value.`;
+  }
+  if (signal.pipeline === 'crisis') {
+    return `@${author} Thanks for flagging this. We're monitoring ${signal.angle} closely and keeping communication clear as facts develop.`;
+  }
+  return `@${author} Thanks for sharing. We're following this (${strategy}) and will continue to engage thoughtfully.`;
 }
 
-function buildSingleToneUserPrompt(signal: Signal, tone: DraftTone, context?: string): string {
-  const categoryName = SIGNAL_CATEGORIES[signal.category] ?? 'unknown_category';
+function buildSingleToneUserPrompt(signal: PipelineSignal, tone: ToneItem, context?: string): string {
   const contextSection = context ? `Additional context from team: ${context}\n\n` : '';
   return [
     'Generate exactly one reply variant for this tweet.',
     contextSection,
-    `Required strategy: ${tone}`,
+    `Required tone id: ${tone.id}`,
+    `Required tone label: ${tone.label}`,
+    `Required tone description: ${tone.description}`,
     `Author: ${signal.author}`,
-    `Category: ${signal.category} (${categoryName})`,
+    `Pipeline: ${signal.pipeline}`,
+    `Action Type: ${signal.actionType}`,
+    `Angle: ${signal.angle}`,
     `Tweet: ${signal.content}`,
-    'Output either plain text reply only OR JSON object: {"text":"..."}.',
+    'Output ONLY the plain text reply. No JSON wrapping. No markdown fences. No quotes around the text.',
     'Do not output multiple variants.',
   ].join('\n');
 }
 
-export async function generateSingleToneDraft(signal: Signal, tone: DraftTone, context?: string): Promise<string> {
+export async function generateSingleToneDraft(signal: PipelineSignal, tone: DraftTone, context?: string): Promise<string> {
+  const selectedTone = signal.tones.find((item) => item.id === tone)
+    ?? signal.tones.find((item) => item.label === tone)
+    ?? signal.tones[0];
+  if (!selectedTone) {
+    return fallbackSingleToneDraft(signal, tone);
+  }
+
   const mocked = process.env.MOCK_DRAFT_RESPONSE;
   if (mocked) {
     const parsed = JSON.parse(extractJsonObject(mocked)) as Record<string, unknown>;
@@ -174,11 +170,11 @@ export async function generateSingleToneDraft(signal: Signal, tone: DraftTone, c
   }
 
   const systemPrompt = [
-    buildSystemPrompt(),
+    buildSystemPrompt(signal, selectedTone),
     'Generate only one reply in the requested tone.',
-    'Return plain text or JSON object with a single "text" field.',
+    'Return plain text only. No JSON. No code fences.',
   ].join('\n');
-  const userPrompt = buildSingleToneUserPrompt(signal, tone, context);
+  const userPrompt = buildSingleToneUserPrompt(signal, selectedTone, context);
 
   try {
     const raw = await callClaudeText({

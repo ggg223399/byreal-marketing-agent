@@ -1,38 +1,70 @@
-export const SIGNAL_CATEGORIES = {
-  0: 'noise',
-  1: 'byreal_mention',
-  2: 'competitor_intel',
-  3: 'market_opportunity',
-  4: 'defi_metrics',
-  5: 'ecosystem_growth',
-  6: 'future_sectors',
-  7: 'rwa_signal',
-  8: 'risk_event',
-} as const;
+// ============================================
+// Core Pipeline Types (New Architecture)
+// ============================================
 
-export type SignalCategory = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
-export type SignalClass = typeof SIGNAL_CATEGORIES[SignalCategory];
+export type Pipeline = 'mentions' | 'network' | 'trends' | 'crisis';
+export type ActionType = 'reply' | 'qrt' | 'like' | 'monitor' | 'skip' | 'statement';
+export type AccountTier = 'O' | 'S' | 'A' | 'B' | 'C';
+export type CrisisSeverity = 'critical' | 'high' | 'medium';
+export type ConnectionStrength = 'direct' | 'indirect' | 'stretch';
 
-export const CATEGORY_BY_NAME: Record<SignalClass, SignalCategory> = {
-  noise: 0,
-  byreal_mention: 1,
-  competitor_intel: 2,
-  market_opportunity: 3,
-  defi_metrics: 4,
-  ecosystem_growth: 5,
-  future_sectors: 6,
-  rwa_signal: 7,
-  risk_event: 8,
+export const PIPELINE_PRIORITY: Record<Pipeline, number> = {
+  mentions: 1,
+  crisis: 2,
+  network: 3,
+  trends: 4,
 };
 
-export function categoryName(category: SignalCategory): SignalClass {
-  return SIGNAL_CATEGORIES[category];
+// ============================================
+// Tone Item (used in PipelineSignal.tones and LLM output)
+// ============================================
+
+export interface ToneItem {
+  id: string;
+  label: string;
+  description: string;
 }
 
-export type AlertLevel = 'red' | 'orange' | 'yellow' | 'none';
-export type Sentiment = 'positive' | 'neutral' | 'negative';
-export type SuggestedAction = 'qrt_positioning' | 'reply_supportive' | 'like_only' | 'monitor' | 'escalate_internal';
-export type RiskLevel = 'low' | 'medium' | 'high';
+// ============================================
+// Signal Types (Pipeline-based, replaces old Signal)
+// ============================================
+
+export interface PipelineSignal {
+  id: number;
+  tweetId: string;
+  author: string;
+  content: string;
+  url?: string;
+  pipeline: Pipeline;
+  pipelines: string[];  // Array of pipelines this signal belongs to (for dedup granularity)
+  actionType: ActionType;
+  angle: string;  // LLM-provided participation angle
+  tones: ToneItem[];  // 1-3 tone recommendations
+  connection?: ConnectionStrength;  // only for trends pipeline
+  accountTier?: AccountTier;  // only for network pipeline
+  severity?: CrisisSeverity;  // only for crisis pipeline
+  reason: string;
+  sourceAdapter: string;
+  rawJson?: string;
+  createdAt: number;
+  notifiedAt?: number;
+}
+
+// LLM output type per pipeline (what the classifier returns)
+export interface PipelineClassificationResult {
+  tweetId: string;
+  actionType: ActionType;
+  angle: string;
+  tones: ToneItem[];
+  connection?: ConnectionStrength;  // trends
+  accountTier?: AccountTier;  // network
+  severity?: CrisisSeverity;  // crisis
+  reason: string;
+}
+
+// ============================================
+// Raw Data Types
+// ============================================
 
 export interface RawTweet {
   id: string;
@@ -40,28 +72,18 @@ export interface RawTweet {
   content: string;
   url: string;
   created_at: number;
+  metrics?: {
+    likes?: number;
+    retweets?: number;
+    replies?: number;
+    views?: number;
+  };
   metadata?: Record<string, unknown>;
 }
 
-export interface Signal {
-  id: number;
-  tweetId: string;
-  author: string;
-  content: string;
-  url?: string;
-  category: SignalCategory;
-  confidence: number;
-  relevance: number;
-  sentiment: Sentiment;
-  priority: number;
-  riskLevel: RiskLevel;
-  suggestedAction: SuggestedAction;
-  alertLevel: AlertLevel;
-  sourceAdapter: string;
-  rawJson?: string;
-  createdAt: number;
-  notifiedAt?: number;
-}
+// ============================================
+// Approval & Audit Types
+// ============================================
 
 export type ApprovalAction = 'approve' | 'reject' | 'edit';
 
@@ -81,6 +103,10 @@ export interface AuditLog {
   detailsJson?: string;
   createdAt: number;
 }
+
+// ============================================
+// Draft & Tone Types
+// ============================================
 
 export type DraftTone = string;
 
@@ -102,17 +128,49 @@ export interface DraftReply {
   generatedAt: number;
 }
 
+// ============================================
+// Config Types for YAML files
+// ============================================
+
+export interface AccountConfig {
+  handle: string;
+  tier: AccountTier;
+  eventKeywords?: string[];
+  notes?: string;
+}
+
+export interface NarrativeConfig {
+  tag: string;
+  keywords: string[];
+  description: string;
+  active: boolean;
+}
+
+// ============================================
+// Collector Config (Updated for Pipeline Architecture)
+// ============================================
+
 export interface CollectorConfig {
   dataSource: {
     type: string;
     apiKey?: string;
     maxTweetsPerQuery?: number;
   };
+  /**
+   * @deprecated Use pipelines section instead
+   */
   monitoring: {
     accountsTier1: string[];
     accountsPartners: string[];
     keywords: string[];
     pollingIntervalMinutes: number;
+    lastSeenKeyPrefix?: string;
+  };
+  pipelines?: {
+    mentions?: { adapter?: string; };
+    network?: { adapter?: string; };
+    trends?: { adapter?: string; alternateAdapter?: string; };
+    crisis?: { adapter?: string; };
   };
   classification?: {
     model?: string;
@@ -130,6 +188,8 @@ export interface CollectorConfig {
     tier1Channel?: string;           // default: 'tier1-signals'
     tier2Channel?: string;           // default: 'tier2-signals'
     tier3Channel?: string;           // default: 'tier3-signals'
+    ownActivityChannel?: string;
+    competitorIntelChannel?: string;
     noiseChannel?: string;           // default: 'noise'
     summaryChannel?: string;         // default: 'periodic-summary'
   };
@@ -143,7 +203,9 @@ export interface CollectorConfig {
   brandContextPath?: string;  // default: 'prompts/brand_context.md'
 }
 
-
+// ============================================
+// Data Source Adapter (UNCHANGED)
+// ============================================
 
 export interface DataSourceAdapter {
   name: string;

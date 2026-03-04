@@ -1,8 +1,10 @@
 skill: marketing-agent
-version: 2.0.0
-description: "Byreal Twitter Marketing Agent — AI signal classification + Discord team review workflow"
-core_version: 0.1.0
+version: 3.0.0
+description: "Byreal Twitter Marketing Agent — 4-pipeline AI signal classification + Discord team review workflow"
+core_version: ">=1.1.0"
+
 adds:
+  # Source code
   - marketing-agent/approval/workflow.ts
   - marketing-agent/classifier/classify.ts
   - marketing-agent/collector/adapters/mock.ts
@@ -12,6 +14,8 @@ adds:
   - marketing-agent/collector/adapters/xpoz.ts
   - marketing-agent/collector/collect.ts
   - marketing-agent/config/loader.ts
+  - marketing-agent/config/accounts.yaml
+  - marketing-agent/config/narratives.yaml
   - marketing-agent/db/index.ts
   - marketing-agent/db/migrate.ts
   - marketing-agent/db/schema.sql
@@ -21,33 +25,49 @@ adds:
   - marketing-agent/governance/filters.ts
   - marketing-agent/lib/claude-client.ts
   - marketing-agent/notifications/router.ts
-  - marketing-agent/prompts/brand_context.md
-  - marketing-agent/prompts/classification.md
-  - marketing-agent/scripts/run-collector.sh
+  - marketing-agent/scripts/apply-skill.ts
   - marketing-agent/scripts/collect-on-demand.sh
+  - marketing-agent/scripts/generate-ci-matrix.ts
+  - marketing-agent/scripts/generate-resolutions.ts
+  - marketing-agent/scripts/post-update.ts
+  - marketing-agent/scripts/rebase.ts
+  - marketing-agent/scripts/run-ci-tests.ts
+  - marketing-agent/scripts/run-collector.sh
+  - marketing-agent/scripts/run-migrations.ts
   - marketing-agent/scripts/sync-build-output.mjs
+  - marketing-agent/scripts/test-signal.ts
+  - marketing-agent/scripts/uninstall-skill.ts
+  - marketing-agent/scripts/update-core.ts
   - marketing-agent/tests/adapter.test.ts
   - marketing-agent/tests/classifier.test.ts
   - marketing-agent/tests/config.test.ts
   - marketing-agent/tests/db.test.ts
   - marketing-agent/tests/governance.test.ts
   - marketing-agent/types/index.ts
-  - groups/marketing-alerts/CLAUDE.md
-  - config.yaml.example
+  - marketing-agent/docs/network-pipeline-redesign.md
+  # Prompts (placed at nanoclaw root prompts/)
+  - prompts/mentions.md
+  - prompts/network.md
+  - prompts/trends.md
+  - prompts/crisis.md
+  - prompts/brand_context.md
+
 modifies:
   - src/channels/discord.ts
-  - tsconfig.json
-  - vitest.config.ts
-  - package.json
+
 structured:
   npm_dependencies:
-    "@anthropic-ai/sdk": "^0.39.0"
-    better-sqlite3: "^11.0.0"
-    yaml: "^2.0.0"
+    "@anthropic-ai/sdk": "^0.78.0"
+    better-sqlite3: "^11.10.0"
+    yaml: "^2.8.2"
   env_additions:
     - DATA_SOURCE_API_KEY
+    - CLAUDE_CODE_OAUTH_TOKEN  # or ANTHROPIC_API_KEY
+
 depends: []
 conflicts: []
+
 post_apply:
   - "npx tsx marketing-agent/db/migrate.ts"
+
 test: "npx vitest run marketing-agent/tests/"
