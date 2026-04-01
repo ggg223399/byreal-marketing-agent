@@ -1,254 +1,147 @@
 # Byreal Marketing Agent
 
-Twitter 营销情报采集 + AI 分类 + Discord 团队审核系统，封装为 NanoClaw Skill。
+Twitter 营销情报采集 + AI 信号分级 + Discord 团队审核 + 飞书推送，封装为 NanoClaw Skill。
 
-## 功能概览
+## 架构
 
-v2 核心能力：
-- 定时采集 Twitter 推文（指定账号 + 关键词，支持 3 种数据源）
-- Claude Haiku AI 8 类信号分类 + 情感/优先级/风险/建议动作等元数据
-- **8 频道智能路由**：按告警等级（Tier 1/2/3/Noise）+ 建议动作（Reply/Interaction）+ Draft 双维度分发
-- **一键生成回复草稿**：点击按钮选择语气，AI 生成带品牌语境的回复
-- **上下文语气按钮**：不同信号类别显示不同的上下文相关按钮
-- **品牌上下文注入**：从 `prompts/brand_context.md` 加载品牌信息，确保回复与 Byreal 产品相关
-- **定时摘要**：每天 9AM 和 6PM (SGT) 自动推送信号摘要
-- 每日详细 Digest（通过 Webhook 推送）
-- 限流 & 风控（governance）
-
-## 系统架构
+v5 四层流水线，全部通过 YAML 配置，运营无需改代码。
 
 ```
-Twitter → [Collector] → [Classifier (Claude Haiku)] → [DB] → [Discord Bot]
-                                                               ├── 轮询 (30s) → 信号路由 → 8 个频道
-                                                               ├── 按钮交互 → 生成回复草稿 → #draft channel
-                                                               └── 定时摘要 → #periodic-summary
+Source (搜什么)  →  Judge (重不重要)  →  Reactor (怎么反应)  →  Route (发到哪)
+sources.yaml       judge.yaml          reactor.yaml          routing.yaml
+                                                                  ↓
+                                                         Discord 频道 + 飞书 Webhook
 ```
 
-## Discord 频道架构
+### 数据流
 
-v2 采用 8 频道分层设计，Bot 按频道名自动匹配（不需要 Webhook URL 或频道 ID）：
+```
+xAI Search → 推文 → pre_filter(正则/黑名单) → Judge(LLM 分级 alertLevel)
+                                                    ↓ none → 丢弃
+                                                    ↓ 非 none
+                                               Reactor(LLM 决策)
+                                               suggestedAction + tones + replyAngle
+                                                    ↓
+                                               Route(规则匹配 → Discord 频道)
+                                                    ↓
+                                               Lark Webhook(direct-mentions)
+```
 
-### 📋 ACTION — 运营待办
+## 信号来源（Sources）
 
-| 频道 | 路由条件 | 功能 |
+| Source | 频率 | 说明 |
+|--------|------|------|
+| `direct-mentions` | 2x/h | 直接提到 Byreal / @byreal_io 的推文 |
+| `indirect-mentions` | 1x/h | 讨论 Byreal 相关概念但未直接提及品牌 |
+| `trend-keywords` | 1x/h | AI agent、DeFAI、Solana perps 等趋势关键词 |
+| `explore-window` | 1x/4h | 过去 24h 高信号推文（叙事、方向、策略） |
+| `ecosystem-core` | 1x/h | Solana 核心生态账号（@solana, @toly 等） |
+| `top-dapps` | 1x/h | 头部 DeFi 协议（Jupiter, Raydium, Meteora 等） |
+| `solana-kols` | 1x/h | Solana KOL 观点和 alpha |
+| `signal-news-data` | 1x/h | 加密新闻、链上分析、VC 动态 |
+| `key-devs` | 1x/2h | Solana 核心开发者技术动态 |
+| `top-traders` | 1x/h | 链上交易员的实时市场判断 |
+| `crisis` | 2x/h | 安全事件：exploit、hack、rug pull |
+| `fireside-speakers` | 1x/h | Web3 思想领袖和 fireside 嘉宾 |
+
+## Discord 频道路由
+
+按 `suggestedAction` 路由，每条信号进一个频道，颜色表示紧急度：
+
+| 频道 | 路由条件 | 用途 |
 |------|---------|------|
-| `#needs-reply` 🟢 | suggestedAction = reply_supportive / qrt_positioning | 需要回复的信号，Embed 显示 @author - Category 标题，3 个 inline 字段（Priority·Confidence / Risk·Sentiment / Action），5 个语气按钮（第一个高亮绿色）|
-| `#needs-interaction` 🟠 | suggestedAction = like_only / escalate_internal | 需要互动的信号（无按钮，仅信息展示），Embed 边框橙色 |
-| `#draft` 📝 | - | 草稿发布频道，点击语气按钮后草稿发送到这里，带 🗑️ Delete 按钮 |
+| `#needs-reply` | reply_supportive | 需回复的推文，带语气按钮 |
+| `#needs-qrt` | qrt_positioning | 需引用转发，带语气按钮 |
+| `#collab-opportunities` | collab_opportunity | 合作/集成机会 |
+| `#escalation` | escalate_internal | 需内部讨论决策 |
+| `#engagement` | like_only | 点赞即可 |
+| `#trending` | explore_signal | 值得关注的新叙事/方向 |
+| `#noise` | none / 兜底 | 低优先级 |
 
-### 📊 INTELLIGENCE — 按优先级分层
+### 信号卡片
 
-| 频道 | 路由条件 | 说明 |
-|------|---------|------|
-| `#tier1-signals` 🔴 | alertLevel = red | 高优先级（增长里程碑、风险事件、高置信度信号），蓝色边框 |
-| `#tier2-signals` 🟠 | alertLevel = orange | 中优先级，蓝色边框 |
-| `#tier3-signals` 🟡 | alertLevel = yellow | 低优先级，蓝色边框 |
+- 🔴 红色 = 立即处理（安全事件、大 V 批评）
+- 🟠 橙色 = 尽快处理（直接提及、合作机会）
+- 🟡 黄色 = 可以晚看（间接信号、趋势）
+- 带 **语气按钮**（AI 根据信号动态生成 2-3 个语气选项）
+- 带 **反馈下拉**（Not Relevant / Wrong Category / Good Signal 等）
+- 点按钮 → AI 生成回复草稿 → 发到 thread
 
-### 🔇 NOISE
+## 飞书推送
 
-| 频道 | 路由条件 | 说明 |
-|------|---------|------|
-| `#noise` | alertLevel = none | 低价值信号（低置信度的机构/排名/市场结构类） |
+`direct-mentions` 信号实时推送到飞书群（Lark Webhook），卡片包含：
+- 推文内容 + 作者
+- 发布时间 + 互动数据（views/likes/RT/replies）
+- Alert 级别 + 建议动作 + 信号来源
+- AI 分析理由（Judge reasoning）
+- 回复角度（Reply angle）
+- View on X 按钮
 
-### 📰 SUMMARY
+配置：`.env` 中设置 `LARK_MENTION_WEBHOOK_URL`。
 
-| 频道 | 触发 | 说明 |
-|------|------|------|
-| `#periodic-summary` | 每天 9:00 AM 和 6:00 PM SGT | 过去 12 小时信号摘要（按 Tier 分组统计） |
+## 配置文件
 
-### 双发机制
+所有配置在 `config/` 目录，YAML 格式：
 
-每条信号最多发到 **2 个频道**：
-1. **Tier 频道**（必发）— 纯信息展示，无按钮，蓝色边框
-2. **Action 频道**（按需）— 带上下文语气按钮（needs-reply）或仅信息展示（needs-interaction）
-
-## 信号分类
-
-8 类信号 + emoji 标识：
-
-| Cat | Emoji | 类型 | 示例 |
-|-----|-------|------|------|
-| 1 | 🚀 | Solana Growth Milestone | Solana 活跃钱包突破 1 亿 |
-| 2 | 🏛️ | Institutional Adoption | 大型机构入场 Solana |
-| 3 | 📜 | RWA Signal | RWA 代币化新框架 |
-| 4 | 💧 | Liquidity Signal | 流动性异动、TVL 变化 |
-| 5 | 📊 | Market Structure Insight | DEX 交易量激增 |
-| 6 | 🏆 | Byreal Ranking Mention | Byreal 在排名/对比中被提及 |
-| 7 | 🤝 | Partner Momentum | 合作伙伴动态 |
-| 8 | ⚠️ | Risk Event | 安全事件、exploit、rug |
-
-## 回复草稿生成
-
-### 交互流程
-
-1. 信号出现在 `#needs-reply` 频道，Embed 显示：
-   - **标题**: `@author - Category`（带超链接）
-   - **字段**: Priority·Confidence、Risk·Sentiment、Action（3 个 inline 字段）
-   - **内容**: 推文原文 + [View Tweet] 链接 + 分隔线
-   - **页脚**: `Signal #ID` + 时间戳
-   - 底部带 5 个按钮（Helpful、Friendly、Humble、Direct + Context）
-2. 运营点击按钮 → 草稿发送到 `#draft` 频道（全员可见）
-3. `#draft` 频道的草稿显示原始推文内容 + 回复草稿
-4. 信号 Embed 底部显示 `Signal #ID`（如 `Signal #43`），可用 `draft reply #N` 从任意频道查看
-5. `#needs-interaction` 信号无按钮（仅信息展示），字段与 needs-reply 相同
-
-1. 信号出现在 `#needs-reply` 频道，带 3-4 个上下文相关语气按钮（第一个按钮高亮绿色）
-2. 运营点击按钮 → 草稿发送到 `#draft` 频道（全员可见）
-3. `#draft` 频道的草稿显示原始推文内容 + 回复草稿，带 🗑️ Delete 按钮可删除
-4. 信号 Embed 底部显示 `#ID`（如 `#43`），可用 `draft reply #N` 从任意频道查看
-5. `#needs-interaction` 信号无按钮（仅信息展示）
-
-### 语气按钮
-
-当前实现使用 **4 个默认语气按钮**（所有类别通用）：
-
-| 按钮 | 标签 | 描述 |
-|------|------|------|
-| 1 | Helpful | 专业权威，提供具体价值（高亮绿色） |
-| 2 | Friendly | 轻松对等，亲切友好 |
-| 3 | Humble | 感恩致谢，不强推 |
-| 4 | Direct | 正面回应关切，建设性反驳 |
-
-所有 4 个按钮 + Context 按钮在一行显示（共 5 个按钮）。
-
-> **注意**: 可通过 `config.yaml` 中的 `tones` 配置自定义按钮，最多 5 个。
-
-每个信号类别显示不同的上下文相关按钮：
-
-| 类别 | 按钮 1 | 按钮 2 | 按钮 3 | 按钮 4 |
-|------|--------|--------|--------|--------|
-| Category 1 (Solana Growth) | 🎉 Celebrate | 📊 Data Commentary | 🚀 Amplify | - |
-| Category 2 (Institutional) | 🧑‍💼 Expert Analysis | 📊 Market Impact | 🙏 Welcome Aboard | 💬 Our Position |
-| Category 6 (Ranking Mention) | 🙏 Thank You | 🎉 Celebrate | 📊 More Data | 💬 Add Context |
-| Category 8 (Risk Event) | 💬 Fact Check | 🧑‍💼 Expert Response | 🙏 Acknowledge | 👋 Reassure |
-
-### 颜色标识
-
-- `#needs-reply` 频道信号：🟢 绿色 Embed 边框（高优先级，需要行动）
-- `#needs-interaction` 信号：🟠 橙色 Embed 边框（较低优先级）
-- Tier 频道（#tier1/2/3-signals）：🔵 蓝色 Embed 边框（信息展示）
-
-### 品牌上下文
-
-AI 生成回复时会注入 `prompts/brand_context.md` 中的品牌信息，确保回复与 Byreal 产品定位一致。包含：产品特性、竞品对比、品牌语调指南。
-
-## 数据源支持
-
-| 数据源 | 认证方式 | 计费 | 适用场景 |
-|--------|---------|------|---------|
-| `mock` | 无 | 免费 | 本地开发测试 |
-| `twitterapi_io` | X-API-Key | $0.15/1K tweets | 初期上线，按量付费 |
-| `twitter_v2` | Bearer Token | $100/月起 | 官方 API，高配额需求 |
-| `xai_search` | xAI API Key | 按 token 计费 | xAI Grok + X Search，AI 驱动的推文采集 |
-
-## 配置说明
-
-`config.yaml` 核心配置项：
-
-### data_source
-
-- `type`: 数据源类型（mock / twitterapi_io / twitter_v2 / xai_search）
-- `api_key`: API key（可通过 `DATA_SOURCE_API_KEY` 环境变量覆盖）
-- `max_tweets_per_query`: 每次查询返回数量（默认 5，范围 1-100）
-
-### monitoring
-
-- `accounts_tier1`: 主要监控账号列表
-- `accounts_partners`: 合作方账号列表
-- `keywords`: 监控关键词列表
-- `polling_interval_minutes`: 采集间隔（分钟）
-
-### classification
-
-- `model`: 分类模型（默认 claude-haiku-4-5）
-- `temperature`: 温度参数（默认 0）
-
-### notifications
-
-- `digest_webhook_url`: 每日 Digest Webhook URL
-- `digest_time` / `digest_timezone`: Digest 推送时间
-- `needs_reply_channel`: 需回复频道名（默认 needs-reply）
-- `needs_interaction_channel`: 需互动频道名（默认 needs-interaction）
-- `draft_channel`: 草稿发布频道名（默认 draft）
-- `tier1_channel` ~ `tier3_channel`: Tier 频道名
-- `noise_channel`: 噪音频道名（默认 noise）
-- `summary_channel`: 摘要频道名（默认 periodic-summary）
-
-### tones（可选）
-
-语气配置数组，每项包含：
-- `id`: 唯一标识（≤20 字符）
-- `label`: 按钮显示文本
-- `emoji`: 按钮 emoji
-- `description`: 语气描述（传给 AI 用于生成对应风格回复）
-
-最多 5 个（Discord ActionRow 限制）。不配置时使用默认上下文按钮。
-
-### brand_context_path（可选）
-
-品牌上下文文件路径（默认 `prompts/brand_context.md`），≤3000 字符。
-
-### governance
-
-- `max_replies_per_hour`: 每小时最大回复数
-- `max_replies_per_day`: 每天最大回复数
-- `blacklist`: 黑名单账号
-- `risk_keywords`: 风险关键词
-
-## 项目结构
-
-### Skill 仓库
-
-```
-byreal-marketing-agent/
-├── collector/          # 数据采集（adapters: mock, twitterapi_io, twitter_v2）
-├── classifier/         # AI 分类（Claude Haiku，8 类信号）
-├── generator/          # 回复草稿生成（品牌上下文注入）
-├── approval/           # 审批工作流
-├── notifications/      # 告警路由（resolveTargetChannels 双发逻辑）
-├── digest/             # 每日摘要
-├── governance/         # 限流 & 风控
-├── db/                 # SQLite schema & migrations
-├── config/             # YAML 配置加载 + normalizeConfig
-├── prompts/            # 分类 prompt + 品牌上下文
-├── tests/              # 单元测试（vitest，99 tests）
-├── scripts/            # cron 脚本（采集、Digest）
-├── types/              # TypeScript 类型定义
-├── lib/                # 共享库
-├── src/channels/       # Discord channel 实现
-├── groups/             # NanoClaw group
-├── config.yaml.example # 配置模板
-└── SKILL.md            # NanoClaw 安装指南
-```
-
-### 安装后（NanoClaw 侧）
-
-```
-nanoclaw/
-├── src/channels/discord.ts    ← Discord Bot（信号轮询 + 按钮交互 + 摘要调度）
-├── marketing-agent/           ← 业务逻辑
-│   ├── prompts/brand_context.md  ← 品牌上下文
-│   └── ...
-├── groups/marketing-alerts/   ← NanoClaw 群组
-├── config.yaml                ← 运行配置
-└── data/signals.db            ← SQLite 数据库
-```
-
-## 安装
-
-详见 [SKILL.md](./SKILL.md)。
-
-## Discord 命令
-
-在任意频道 @mention Bot：
-
-| 命令 | 说明 |
+| 文件 | 说明 |
 |------|------|
-| `show signals` | 列出待审核信号 |
-| `draft reply #N` | 从任意频道查看指定信号草稿（可指定语气，如 `draft reply #N 🎉`） |
-| `reject #N` | 拒绝信号 |
-| `status` | 系统统计 |
+| `sources.yaml` | 搜索方向、频率、prompt、pre_filter |
+| `judge.yaml` | 分级规则（alertLevel: red/orange/yellow/none） |
+| `reactor.yaml` | 行动决策规则（suggestedAction + tones + replyAngle） |
+| `routing.yaml` | alertLevel/suggestedAction → Discord 频道映射 |
+| `accounts.yaml` | 监控账号分组（core/top-dapps/kols 等） |
+| `governance.yaml` | 权限控制（谁能用 /config 命令） |
+| `generator.yaml` | 草稿生成配置 |
+| `enrichment.yaml` | 数据增强配置 |
 
-## License
+### Discord Slash 命令
 
-MIT
+运营可在 Discord 内直接管理配置（无需 SSH）：
+
+- `/config view` — 查看当前配置
+- `/config accounts-add/remove` — 添加/移除监控账号
+- `/config keywords-add/remove` — 添加/移除关键词
+- `/config prompt-edit` — 在 Modal 里编辑 prompt
+- `/config source-set-max` — 调整单源最大推文数
+- `/config access-*` — 管理谁有权限改配置
+
+## 技术栈
+
+- **Runtime**: Node.js + TypeScript (ESM)
+- **LLM**: Claude API（Judge + Reactor + Generator）
+- **数据源**: xAI Grok Search API
+- **数据库**: SQLite (better-sqlite3)
+- **Discord**: discord.js
+- **飞书**: Lark Webhook (Interactive Card)
+- **调度**: node-cron
+- **部署**: NanoClaw Skill → systemd
+
+## 环境变量
+
+```bash
+DISCORD_BOT_TOKEN=         # Discord Bot Token
+CLAUDE_CODE_OAUTH_TOKEN=   # Claude API 认证
+DATA_SOURCE_API_KEY=       # xAI API Key
+LARK_MENTION_WEBHOOK_URL=  # 飞书 Webhook（direct-mentions 推送）
+MARKETING_AGENT_DB_PATH=   # SQLite 路径（默认 data/signals.db）
+```
+
+## 部署
+
+作为 NanoClaw Skill 安装，详见 [SKILL.md](SKILL.md)。
+
+```bash
+# 安装
+npx tsx -e "import { applySkill } from ./skills-engine/index.ts; applySkill(.claude/skills/add-marketing-agent)"
+
+# Cron 调度（由 engine 内置 node-cron 管理，无需外部 crontab）
+
+# 重启
+systemctl --user restart nanoclaw
+```
+
+## 文档
+
+- [Signal Pipeline 架构](add/marketing-agent/docs/signal-pipeline-architecture.md) — 四层架构详解
+- [运营使用指南](add/marketing-agent/docs/operations-guide.md) — 面向运营，无需懂代码
+- [架构模式研究](add/marketing-agent/docs/architecture-patterns-research.md) — 设计决策背景
