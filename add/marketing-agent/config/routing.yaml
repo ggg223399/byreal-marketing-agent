@@ -1,0 +1,35 @@
+# Signal Pipeline v5 — Routing Configuration
+# Action-first single routing: each signal → one channel.
+# Urgency shown via embed color (red/orange/yellow), not separate tier channels.
+# See docs/signal-pipeline-architecture.md Layer 4.
+
+routing:
+  default:
+    channel: noise
+
+  routes:
+    # Action-based routing (each signal enters exactly one channel)
+    - match: { suggestedAction: reply_supportive }
+      channel: needs-reply
+
+    - match: { suggestedAction: qrt_positioning }
+      channel: needs-qrt
+
+    - match: { suggestedAction: collab_opportunity }
+      channel: collab-opportunities
+
+    - match: { suggestedAction: escalate_internal }
+      channel: escalation
+
+    - match: { suggestedAction: like_only }
+      channel: engagement
+
+    - match: { suggestedAction: explore_signal }
+      channel: trending
+
+    # suggestedAction: none falls through to default → noise
+
+  # explore_signal routes directly to the trending/explore channel.
+  # Legacy enrichment can also emit trending records when enabled.
+
+  dedup_key: [tweet_id, channel]

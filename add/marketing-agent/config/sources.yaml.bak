@@ -1,0 +1,237 @@
+# Signal Pipeline v5 — Source Configuration
+# Each source defines a search direction with its own schedule and prompt.
+# See docs/signal-pipeline-architecture.md for architecture details.
+
+sources:
+  # --- Brand Mentions (highest priority, staggered 2x/hour) ---
+  - name: direct-mentions
+    schedule: "7,37 * * * *"
+    lookback_minutes: 45
+    use_last_seen: true
+    max_tweets: 5
+    prompt: |
+      Search for tweets mentioning "Byreal", "@byreal_io", "byreal.io", "#byreal"
+      "#byreal", "$BYREAL", or "@emilyRioFreeman".
+      Include indirect mentions (discussing Byreal products without using the brand name).
+      Exclude tweets posted by Byreal-owned accounts themselves, especially
+      "@byreal_io" and "@emilyRioFreeman".
+      Search for external discussion about Byreal, not self-posts from the brand.
+      Exclude pure retweets, only original tweets.
+
+  - name: indirect-mentions
+    schedule: "5 * * * *"
+    lookback_minutes: 60
+    use_last_seen: true
+    max_tweets: 3
+    prompt: |
+      Search for tweets that discuss Byreal products or concepts without mentioning Byreal directly.
+      Look for discussions about: ["Solana-native DEXs", "Automated Yield", "AI Defi agents",
+      "Copy LPing, Copy Farming", "LP Strategy", "RWAs, tokenized stocks, gold..." etc.]
+      Exclude tweets that already mention "Byreal", "@byreal_io", "byreal.io", "#byreal", "$BYREAL", or "@emilyRioFreeman".
+    pre_filter:
+      exclude_patterns:
+        - "(?i)byreal|@byreal_io|byreal\\.io|#byreal|\\$byreal"
+        - "(?i)^RT @"
+      min_length: 30
+
+  - name: trend-keywords
+    schedule: "10 * * * *"
+    lookback_minutes: 60
+    use_last_seen: true
+    max_tweets: 3
+    keywords:
+      - AI agent Solana
+      - DeFi AI agent
+      - Crypto AI agent
+      - Solana AI
+      - onchain AI agent
+      - crypto trend
+      - crypto narrative
+    prompt: |
+      Search for tweets discussing these topics: {{keywords}}
+      Focus on emerging narratives, trend shifts, strong opinions,
+      early product signals, and high-signal commentary.
+    pre_filter:
+      exclude_patterns:
+        - "(?i)^RT @"
+        - "(?i)giveaway|airdrop.*(tag|mention|follow)"
+        - "(?i)follow.*rt.*win"
+        - "(?i)\\bCA\\s*[:：]"
+        - "(?i)(contract address|token launch|presale|fair launch)"
+        - "(?i)(100x|moonshot|next\\s+gem|massive upside|still early|undervalued)"
+      min_length: 30
+
+  - name: explore-window
+    schedule: "15 */4 * * *"
+    lookback_minutes: 1440
+    use_last_seen: false
+    max_tweets: 10
+    prompt: |
+      Search for tweets from the last 24 hours across Solana and crypto that are
+      worth exploring for Byreal's team.
+      Prioritize high-signal posts that reveal new narratives, product directions,
+      distribution tactics, infra primitives, user demand shifts, or market structure changes.
+      Prefer posts that are already getting real attention or discussion, but do not
+      return empty hype with no informational value.
+    pre_filter:
+      exclude_patterns:
+        - "(?i)^RT @"
+        - "(?i)giveaway|airdrop.*(tag|mention|follow)"
+        - "(?i)follow.*rt.*win"
+        - "(?i)(affiliate|referral|promo|discount).*(link|code|url)"
+        - "(?i)\\bCA\\s*[:：]"
+        - "(?i)(contract address|presale|fair launch)"
+      min_length: 40
+
+  # --- Core Ecosystem Accounts ---
+  - name: ecosystem-core
+    schedule: "12 * * * *"
+    lookback_minutes: 60
+    use_last_seen: true
+    max_tweets: 3
+    prompt: |
+      Search for tweets from Solana core ecosystem accounts.
+      Focus on ecosystem announcements, network upgrades, new feature launches,
+      DeFi and trading insights, ecosystem grants and builder programs,
+      market commentary and liquidity trends, and partnership news.
+    accounts_ref: accounts.yaml
+    groups: [core]
+    pre_filter:
+      exclude_patterns:
+        - "(?i)^RT @"
+
+  # --- fireside speakers with lily ---
+  - name: fireside-speakers
+    schedule: "18 * * * *"
+    lookback_minutes: 60
+    use_last_seen: true
+    max_tweets: 3
+    prompt: |
+      Search for tweets from key Web3 thought leaders and fireside speakers.
+      Focus on crypto and Web3 macro insights, investment theses,
+      industry trends and predictions, DeFi and blockchain commentary,
+      and high-signal opinions on the future of finance and on-chain economy.
+    accounts_ref: accounts.yaml
+    groups: [fireside-speakers]
+    pre_filter:
+      exclude_patterns:
+        - "(?i)^RT @"
+        - "(?i)(affiliate|referral|promo|discount).*(link|code|url)"
+
+  # --- top dapps on solana ---
+  - name: top-dapps
+    schedule: "24 * * * *"
+    lookback_minutes: 60
+    use_last_seen: true
+    max_tweets: 3
+    prompt: |
+      Search for tweets from key Solana DeFi protocols, wallets, and ecosystem apps:
+
+      Focus on new feature launches and product updates, liquidity and TVL milestones,
+      protocol integrations and partnerships, token launches and incentive programs,
+      and trading activity highlights.
+    accounts_ref: accounts.yaml
+    groups: [top-dapps]
+    pre_filter:
+      exclude_patterns:
+        - "(?i)giveaway|airdrop.*(tag|mention|follow)"
+        - "(?i)follow.*rt.*win"
+        - "(?i)^RT @"
+        - "(?i)tag (a )?friend|tag (your )?friend"
+        - "(?i)(whitelist|allowlist).*(spot|open|live)"
+
+  # --- solana-kols ---
+  - name: solana-kols
+    schedule: "30 * * * *"
+    lookback_minutes: 60
+    use_last_seen: true
+    max_tweets: 3
+    prompt: |
+      Search for tweets from influential and outspoken Solana KOLs.
+      Focus on strong conviction calls on tokens or protocols, bullish takes
+      on Solana ecosystem growth, criticism of competing chains or narratives,
+      reactions to major on-chain events, and early alpha on new launches
+      or emerging trends before they go mainstream.
+
+    accounts_ref: accounts.yaml
+    groups: [solana-kols]
+    pre_filter:
+      exclude_patterns:
+        - "(?i)giveaway|airdrop.*(tag|mention|follow)"
+        - "(?i)follow.*rt.*win"
+        - "(?i)^RT @"
+        - "(?i)(affiliate|referral).*(link|code)"
+        - "(?i)(entry|target|stop loss|take profit).*\\$[A-Za-z0-9]{2,10}"
+
+  # --- signal-news-data ---
+  - name: signal-news-data
+    schedule: "36 * * * *"
+    lookback_minutes: 60
+    use_last_seen: true
+    max_tweets: 3
+    prompt: |
+      Search for tweets from crypto news sources, on-chain analytics accounts, and leading crypto VCs.
+      Focus on breaking ecosystem news and protocol updates, data-driven insights
+      on chain activity and user behavior, VC portfolio moves and investment theses,
+      and early narratives backed by either data or institutional conviction.
+    accounts_ref: accounts.yaml
+    groups: [signal-news-data]
+    pre_filter:
+      exclude_patterns:
+        - "(?i)^RT @"
+
+  # --- key-devs ---
+  - name: key-devs
+    schedule: "42 */2 * * *"
+    lookback_minutes: 120
+    use_last_seen: true
+    max_tweets: 3
+    prompt: |
+      Search for tweets from core Solana developers and protocol engineers.
+      Focus on technical breakthroughs and low-level protocol insights, honest
+      takes on infrastructure challenges and solutions, early signals on upcoming
+      developer tooling or protocol changes, and any commentary that reveals
+      where serious engineering effort is being directed.
+    accounts_ref: accounts.yaml
+    groups: [key-devs]
+    pre_filter:
+      exclude_patterns:
+        - "(?i)^RT @"
+
+  # --- top-traders ---
+  - name: top-traders
+    schedule: "48 * * * *"
+    lookback_minutes: 60
+    use_last_seen: true
+    max_tweets: 3
+    prompt: |
+      Search for tweets from elite on-chain traders.
+      Focus on specific token calls with reasoning, real-time reads on market
+      structure and momentum, entry and exit commentary, and unfiltered takes
+      on what's actually working in the current market.
+    accounts_ref: accounts.yaml
+    groups: [top-traders]
+    pre_filter:
+      exclude_patterns:
+        - "(?i)^RT @"
+
+  # --- Crisis Monitoring ---
+  - name: crisis
+    schedule: "22,52 * * * *"
+    lookback_minutes: 15
+    use_last_seen: true
+    max_tweets: 2
+    prompt: |
+      Search for security incidents in the Solana DeFi ecosystem:
+      exploits, hacks, rug pulls, fund theft, contract vulnerabilities,
+      depegs, bridge exploits, oracle manipulation.
+      Include unconfirmed but suspicious early reports.
+      Focus on events affecting Byreal, Solana ecosystem, or related protocols.
+    pre_filter:
+      exclude_patterns:
+        - "(?i)^RT @"
+        - "(?i)^(breaking|heard|reports?|rumor):?\\s*$"
+        - "(?i)^(following|watching|monitoring)\\b.{0,40}$"
+        - "(?i)(rug pull detected|warning confirmed)"
+        - "(?i)(safety score|launchradar flagged)"
+      min_length: 25

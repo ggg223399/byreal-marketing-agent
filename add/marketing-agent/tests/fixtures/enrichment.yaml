@@ -1,0 +1,12 @@
+enrichment:
+  enabled: true
+  delay_minutes: 120
+  schedule: "15 */2 * * *"
+  batch_size: 20
+  max_age_hours: 24
+  trending:
+    enabled: true
+    thresholds:
+      views: 5000
+      likes: 100
+      retweets: 50

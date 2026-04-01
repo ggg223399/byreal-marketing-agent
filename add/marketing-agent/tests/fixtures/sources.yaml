@@ -1,0 +1,34 @@
+sources:
+  - name: mentions
+    schedule: "*/15 * * * *"
+    prompt: "Search for tweets mentioning Byreal"
+  - name: trend-keywords
+    schedule: "*/30 * * * *"
+    keywords: ["AI agent Solana", "Crypto AI agent"]
+    prompt: "Search for tweets about {{keywords}}"
+  - name: explore-window
+    schedule: "0 */4 * * *"
+    lookback_minutes: 1440
+    use_last_seen: false
+    max_tweets: 10
+    prompt: "Search for high-signal tweets from the last 24 hours worth exploring"
+    pre_filter:
+      exclude_patterns:
+        - "(?i)^RT @"
+      min_length: 40
+  - name: ecosystem-core
+    schedule: "*/30 * * * *"
+    prompt: "Search core partner tweets"
+    accounts_ref: tests/fixtures/accounts.yaml
+    groups: [core]
+    skip_judge: true
+    default_labels:
+      alertLevel: orange
+      suggestedAction: reply_supportive
+  - name: ecosystem
+    schedule: "*/30 * * * *"
+    prompt: "Search ecosystem tweets about protocol launches"
+    pre_filter:
+      exclude_patterns:
+        - "(?i)giveaway|airdrop"
+      min_length: 20

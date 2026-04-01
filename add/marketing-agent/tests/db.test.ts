@@ -5,35 +5,39 @@ vi.hoisted(() => {
 });
 
 import {
-  closeDb,
-  getConfigOverride,
-  getDb,
-  getPendingSignals,
-  getRateLimit,
-  getSignalById,
+    closeDb,
+    getConfigOverride,
+    getDb,
+    getPendingSignals,
+    getRateLimit,
+    recordSignalFeedback,
+    getSignalById,
+    getSignalsByPipeline,
+    getUnnotifiedSignals,
   incrementRateLimit,
   insertSignal,
+  insertV5Signal,
   logAudit,
   recordApproval,
   setConfigOverride,
 } from '../db/index.js';
-import type { SignalCategory } from '../types/index.js';
+import type { ActionType, ConnectionStrength, CrisisSeverity, Pipeline, ToneItem } from '../types/index.js';
 
-function mkSignal(tweetId: string, alertLevel: 'red' | 'orange' | 'yellow' | 'none' = 'none') {
-  const category: SignalCategory = alertLevel === 'yellow' ? 4 : 1;
+function mkSignal(tweetId: string, pipeline: Pipeline = 'mentions', actionType: ActionType = 'reply') {
+  const tones: ToneItem[] = [
+    { id: 'friendly_peer', label: 'Friendly Peer', description: '轻松对等，亲切友好' }
+  ];
 
   return {
     tweetId,
     author: '@a',
     content: `content ${tweetId}`,
     url: `https://x.com/${tweetId}`,
-    category,
-    confidence: 70,
-    sentiment: 'neutral',
-    priority: 3,
-    riskLevel: 'low',
-    suggestedAction: 'monitor',
-    alertLevel,
+    pipeline,
+    actionType,
+    angle: 'Test angle',
+    tones,
+    reason: 'Test reason',
     sourceAdapter: 'mock',
     rawJson: '{}',
   };
@@ -51,31 +55,88 @@ describe('db/index', () => {
     expect(a).toBe(b);
   });
 
-  it('insertSignal persists a row', () => {
+  it('insertSignal persists a row with pipeline schema', () => {
     const out = insertSignal(mkSignal('t1'));
     expect(out.id).toBeGreaterThan(0);
     expect(out.tweetId).toBe('t1');
+    expect(out.pipeline).toBe('mentions');
+    expect(out.actionType).toBe('reply');
+    expect(out.angle).toBe('Test angle');
+    expect(out.tones).toHaveLength(1);
+    expect(out.reason).toBe('Test reason');
   });
 
   it('getSignalById returns null when not found', () => {
     expect(getSignalById(999)).toBeNull();
   });
 
-  it('getSignalById returns inserted row', () => {
-    const out = insertSignal(mkSignal('t2'));
+  it('getSignalById returns inserted row with new fields', () => {
+    const out = insertSignal(mkSignal('t2', 'crisis', 'statement'));
     const fetched = getSignalById(out.id);
     expect(fetched?.tweetId).toBe('t2');
+    expect(fetched?.pipeline).toBe('crisis');
+    expect(fetched?.actionType).toBe('statement');
   });
 
-  it('enforces unique tweet_id', () => {
-    insertSignal(mkSignal('dup'));
-    expect(() => insertSignal(mkSignal('dup'))).toThrow('UNIQUE constraint failed');
+  it('merges duplicate tweet_id into a single signal', () => {
+    insertSignal(mkSignal('dup', 'mentions'));
+    const merged = insertSignal(mkSignal('dup', 'crisis', 'statement'));
+
+    expect(merged.pipeline).toBe('crisis');
+    expect(merged.pipelines).toEqual(expect.arrayContaining(['mentions', 'crisis']));
+    expect(getSignalsByPipeline('mentions', 10)).toHaveLength(0);
+    expect(getSignalsByPipeline('crisis', 10)).toHaveLength(1);
   });
 
   it('stores nullable url/rawJson as undefined on read', () => {
     const out = insertSignal({ ...mkSignal('t3'), url: undefined, rawJson: undefined });
     expect(out.url).toBeUndefined();
     expect(out.rawJson).toBeUndefined();
+  });
+
+  it('stores and retrieves network pipeline with accountTier', () => {
+    const out = insertSignal({
+      ...mkSignal('net1', 'network', 'reply'),
+      accountTier: 'S',
+    });
+    const fetched = getSignalById(out.id);
+    expect(fetched?.pipeline).toBe('network');
+    expect(fetched?.accountTier).toBe('S');
+  });
+
+  it('stores and retrieves trends pipeline with connection', () => {
+    const out = insertSignal({
+      ...mkSignal('trend1', 'trends', 'qrt'),
+      connection: 'direct' as ConnectionStrength,
+    });
+    const fetched = getSignalById(out.id);
+    expect(fetched?.pipeline).toBe('trends');
+    expect(fetched?.connection).toBe('direct');
+  });
+
+  it('stores and retrieves crisis pipeline with severity', () => {
+    const out = insertSignal({
+      ...mkSignal('crisis1', 'crisis', 'statement'),
+      severity: 'high' as CrisisSeverity,
+    });
+    const fetched = getSignalById(out.id);
+    expect(fetched?.pipeline).toBe('crisis');
+    expect(fetched?.severity).toBe('high');
+  });
+
+  it('stores tones as JSON and parses them back', () => {
+    const tones: ToneItem[] = [
+      { id: 'helpful_expert', label: 'Helpful Expert', description: '专业权威' },
+      { id: 'friendly_peer', label: 'Friendly Peer', description: '轻松对等' },
+    ];
+    const out = insertSignal({
+      ...mkSignal('tones1'),
+      tones,
+    });
+    const fetched = getSignalById(out.id);
+    expect(fetched?.tones).toHaveLength(2);
+    expect(fetched?.tones[0].id).toBe('helpful_expert');
+    expect(fetched?.tones[1].label).toBe('Friendly Peer');
   });
 
   it('getPendingSignals returns only unapproved rows', () => {
@@ -92,6 +153,30 @@ describe('db/index', () => {
     insertSignal(mkSignal('l2'));
     insertSignal(mkSignal('l3'));
     expect(getPendingSignals(2)).toHaveLength(2);
+  });
+
+  it('getSignalsByPipeline returns signals filtered by pipeline', () => {
+    insertSignal(mkSignal('sig1', 'mentions'));
+    insertSignal(mkSignal('sig2', 'crisis'));
+    insertSignal(mkSignal('sig3', 'mentions'));
+    insertSignal(mkSignal('sig4', 'network'));
+
+    const mentionsSignals = getSignalsByPipeline('mentions', 10);
+    expect(mentionsSignals).toHaveLength(2);
+    expect(mentionsSignals.every(s => s.pipeline === 'mentions')).toBe(true);
+
+    const crisisSignals = getSignalsByPipeline('crisis', 10);
+    expect(crisisSignals).toHaveLength(1);
+    expect(crisisSignals[0].pipeline).toBe('crisis');
+  });
+
+  it('getSignalsByPipeline honors limit', () => {
+    insertSignal(mkSignal('pl1', 'mentions'));
+    insertSignal(mkSignal('pl2', 'mentions'));
+    insertSignal(mkSignal('pl3', 'mentions'));
+
+    const limited = getSignalsByPipeline('mentions', 2);
+    expect(limited).toHaveLength(2);
   });
 
   it('recordApproval stores approve action', () => {
@@ -124,6 +209,48 @@ describe('db/index', () => {
     logAudit('noop');
     const row = getDb().prepare('SELECT details_json FROM audit_log').get() as { details_json: string | null };
     expect(row.details_json).toBeNull();
+  });
+
+  it('recordSignalFeedback persists structured feedback snapshot', () => {
+    const signal = insertV5Signal({
+      tweetId: 'feedback-1',
+      author: '@route_bot',
+      content: 'feedback me',
+      url: 'https://x.com/route_bot/status/3',
+      resolvedChannels: ['needs-reply'],
+      sourceName: 'mentions',
+      alertLevel: 'orange',
+      suggestedAction: 'reply_supportive',
+      tones: [{ id: 'casual', label: 'Casual', description: 'Friendly' }],
+      replyAngle: 'Say thanks',
+      judgeReasoning: 'Relevant mention',
+      rawJson: '{}',
+    });
+
+    const feedback = recordSignalFeedback({
+      signalId: signal.id,
+      feedbackType: 'wrong_category',
+      feedbackBy: 'tester',
+      sourceName: signal.sourceName,
+      alertLevel: signal.alertLevel,
+      suggestedAction: signal.suggestedAction,
+      resolvedChannels: signal.resolvedChannels,
+      tweetId: signal.tweetId,
+      snapshotJson: JSON.stringify({ signalId: signal.id, tweetId: signal.tweetId }),
+    });
+
+    expect(feedback.signalId).toBe(signal.id);
+    expect(feedback.feedbackType).toBe('wrong_category');
+    expect(feedback.resolvedChannels).toEqual(['needs-reply']);
+
+    const row = getDb().prepare('SELECT feedback_type, feedback_by, tweet_id FROM signal_feedback').get() as {
+      feedback_type: string;
+      feedback_by: string;
+      tweet_id: string;
+    };
+    expect(row.feedback_type).toBe('wrong_category');
+    expect(row.feedback_by).toBe('tester');
+    expect(row.tweet_id).toBe('feedback-1');
   });
 
   it('setConfigOverride writes key/value', () => {
@@ -175,12 +302,57 @@ describe('db/index', () => {
     expect(getRateLimit('day', 1)).toBe(10);
   });
 
-  it('pending signals return mapped field names', () => {
-    insertSignal(mkSignal('map1', 'yellow'));
+  it('pending signals return new pipeline fields', () => {
+    insertSignal(mkSignal('map1', 'crisis', 'statement'));
     const pending = getPendingSignals(1)[0];
-    expect(pending.category).toBe(4);
-    expect(pending.alertLevel).toBe('yellow');
+    expect(pending.pipeline).toBe('crisis');
+    expect(pending.actionType).toBe('statement');
     expect(pending.sourceAdapter).toBe('mock');
+  });
+
+  it('insertV5Signal persists resolved route snapshot', () => {
+    const signal = insertV5Signal({
+      tweetId: 'v5-route-1',
+      author: '@route_bot',
+      content: 'route me',
+      url: 'https://x.com/route_bot/status/1',
+      resolvedChannels: ['needs-reply'],
+      sourceName: 'mentions',
+      alertLevel: 'orange',
+      suggestedAction: 'reply_supportive',
+      tones: [{ id: 'casual', label: 'Casual', description: 'Friendly' }],
+      replyAngle: 'Say thanks and continue the conversation',
+      judgeReasoning: 'Relevant mention from target account',
+      rawJson: '{}',
+    });
+
+    expect(signal.resolvedChannels).toEqual(['needs-reply']);
+
+    const fetched = getSignalById(signal.id);
+    expect(fetched?.resolvedChannels).toEqual(['needs-reply']);
+  });
+
+  it('getUnnotifiedSignals returns v5 fields and resolved channels', () => {
+    insertV5Signal({
+      tweetId: 'v5-unnotified-1',
+      author: '@route_bot',
+      content: 'route me later',
+      url: 'https://x.com/route_bot/status/2',
+      resolvedChannels: ['escalation'],
+      sourceName: 'crisis',
+      alertLevel: 'red',
+      suggestedAction: 'escalate_internal',
+      tones: [{ id: 'official', label: 'Official', description: 'Formal tone' }],
+      replyAngle: 'Escalate internally immediately',
+      judgeReasoning: 'Potential critical incident',
+      rawJson: '{}',
+    });
+
+    const signals = getUnnotifiedSignals(10);
+    const fetched = signals.find((item) => item.tweetId === 'v5-unnotified-1');
+    expect(fetched?.alertLevel).toBe('red');
+    expect(fetched?.suggestedAction).toBe('escalate_internal');
+    expect(fetched?.resolvedChannels).toEqual(['escalation']);
   });
 
   it('closeDb resets singleton', () => {
@@ -195,6 +367,6 @@ describe('db/index', () => {
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
       .all() as Array<{ name: string }>;
     const names = tables.map((t) => t.name);
-    expect(names).toEqual(expect.arrayContaining(['signals', 'approvals', 'audit_log', 'rate_limits', 'config_overrides']));
+    expect(names).toEqual(expect.arrayContaining(['signals', 'approvals', 'audit_log', 'signal_feedback', 'rate_limits', 'config_overrides']));
   });
 });

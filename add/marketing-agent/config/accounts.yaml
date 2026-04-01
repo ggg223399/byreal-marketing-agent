@@ -1,0 +1,87 @@
+accounts:
+  core:
+    - handle: solana
+    - handle: SolanaFndn
+    - handle: SolanaStatus
+    - handle: Solana_devs
+    - handle: SuperteamEarn
+    - handle: SuperteamAE
+      notes: UAE, 15K
+    - handle: superteam
+    - handle: SuperteamES
+    - handle: calilyliu
+      notes: Solana Foundation president
+    - handle: toly
+      notes: Anatoly Yakovenko, Solana co-founder
+    - handle: rajgokal
+      notes: Solana co-founder
+    - handle: ramzyyalii
+      notes: Solana Foundation DeFi specialist
+    - handle: vibhu
+      notes: Solana Foundation CPO
+    - handle: capitalmarkets
+  fireside-speakers:
+    - handle: balajis
+    - handle: daviderutter1
+    - handle: ErbilKaraman
+    - handle: michael_lau
+  top-dapps:
+    - handle: JupiterExchange
+    - handle: kamino
+    - handle: Raydium
+    - handle: MeteoraAG
+    - handle: jito_sol
+    - handle: sanctumso
+    - handle: orca_so
+    - handle: marginfi
+    - handle: DriftProtocol
+    - handle: phantom
+    - handle: solflare
+    - handle: Backpack
+    - handle: MagicEden
+    - handle: Pumpfun
+    - handle: CoinbasePredict
+  solana-kols:
+    - handle: mert
+    - handle: blknoiz06
+    - handle: waleswoosh
+    - handle: ArumBeadlesX
+    - handle: kingboydarling
+    - handle: cryptokolt
+    - handle: AltcoinDailyio
+    - handle: CryptoWendyO
+    - handle: CryptoMichNL
+    - handle: APompliano
+    - handle: RaoulPal
+    - handle: ArthurHayes
+    - handle: Lookonchain
+    - handle: punk6529
+    - handle: serafim
+    - handle: naiive
+    - handle: inversebrah
+    - handle: himgajria
+    - handle: zksgu
+    - handle: sanyi_eth_
+    - handle: SEFATUBA3
+    - handle: iamyourchaos
+    - handle: 0xNing0x
+    - handle: one_snowball
+    - handle: yyds123888
+    - handle: gigiz_eth
+    - handle: lubi366
+    - handle: zhuanfgghjnb
+    - handle: starzq
+    - handle: zhixianio
+  signal-news-data:
+    - handle: DBNewswire
+    - handle: SliceAnalytics
+    - handle: a16zcrypto
+  key-devs:
+    - handle: andrewqu
+    - handle: DmitrySolana
+    - handle: yq_acc
+    - handle: satofishi
+    - handle: DavideCrapis
+    - handle: Steve_Yegge
+  top-traders:
+    - handle: 0x8dxd

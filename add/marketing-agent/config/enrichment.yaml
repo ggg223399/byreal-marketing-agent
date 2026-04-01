@@ -1,0 +1,28 @@
+# Signal Pipeline v5 — Metrics Enrichment Configuration
+# Deprecated path. Kept only for compatibility while enrichment remains disabled.
+
+enrichment:
+  # Intentionally disabled for long-term shutdown.
+  enabled: false
+
+  # How long to wait before re-fetching metrics (minutes)
+  delay_minutes: 120
+
+  # Cron schedule for the enrichment job
+  schedule: "15 */2 * * *"
+
+  # Max signals to enrich per run
+  batch_size: 20
+
+  # Only enrich signals from the last N hours
+  max_age_hours: 24
+
+  # Trending thresholds — if enriched metrics exceed these,
+  # the signal gets upgraded and re-routed as a higher-priority signal
+  trending:
+    enabled: true
+    channel: trending
+    thresholds:
+      views: 5000
+      likes: 100
+      retweets: 50

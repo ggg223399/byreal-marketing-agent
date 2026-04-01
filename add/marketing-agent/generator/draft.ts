@@ -1,6 +1,6 @@
-import { callClaudeText } from '../lib/claude-client.js';
-import { SIGNAL_CATEGORIES } from '../types/index.js';
-import type { DraftReply, DraftTone, DraftVariant, Signal, SignalCategory } from '../types/index.js';
+import { callClaudeText } from '../../src/claude-sdk.js';
+import type { DraftTone, PipelineSignal, ToneItem } from '../types/index.js';
+import { loadGeneratorConfig } from '../engine/config-loader.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -26,10 +26,33 @@ function readSecret(key: string): string | undefined {
   return undefined;
 }
 
-const MODEL = 'claude-3-5-haiku-20241022';
-const TEMPERATURE = 0.7;
+// Defaults — overridden by generator.yaml when loaded via loadGeneratorConfig
+let MODEL = 'claude-sonnet-4-5-20250514';
+let TEMPERATURE = 0.7;
+let MAX_TOKENS = 400;
+let BRAND_CONTEXT_REF: string | undefined;
+
+/**
+ * 从 generator.yaml 配置初始化 Generator 参数。
+ * 由 discord.ts 在启动时调用一次。不调用则使用默认值。
+ */
+export function initGeneratorConfig(config: { model: string; temperature: number; max_tokens: number; brand_context_ref: string }): void {
+  const brandContextChanged = BRAND_CONTEXT_REF !== config.brand_context_ref;
+  MODEL = config.model;
+  TEMPERATURE = config.temperature;
+  MAX_TOKENS = config.max_tokens;
+  BRAND_CONTEXT_REF = config.brand_context_ref;
+  if (brandContextChanged) {
+    cachedBrandContext = null;
+  }
+}
 
 let cachedBrandContext: string | null = null;
+
+export function loadGeneratorRuntimeConfig(configDir = 'marketing-agent/config'): void {
+  const generatorConfig = loadGeneratorConfig(path.resolve(process.cwd(), configDir, 'generator.yaml'));
+  initGeneratorConfig(generatorConfig);
+}
 
 function loadBrandContext(brandContextPath?: string): string {
   if (cachedBrandContext) return cachedBrandContext;
@@ -49,21 +72,6 @@ function loadBrandContext(brandContextPath?: string): string {
   }
 }
 
-const RECOMMENDED_TONES: Record<SignalCategory, [DraftTone, DraftTone]> = {
-  1: ['helpful_expert', 'friendly_peer'],
-  2: ['helpful_expert', 'friendly_peer'],
-  3: ['helpful_expert', 'friendly_peer'],
-  4: ['helpful_expert', 'friendly_peer'],
-  5: ['helpful_expert', 'friendly_peer'],
-  6: ['humble_ack', 'direct_rebuttal'],
-  7: ['friendly_peer', 'humble_ack'],
-  8: ['direct_rebuttal', 'helpful_expert'],
-};
-
-export function getRecommendedTones(category: SignalCategory): [DraftTone, DraftTone] {
-  return RECOMMENDED_TONES[category];
-}
-
 function extractJsonObject(raw: string): string {
   const trimmed = raw.trim();
   if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
@@ -79,36 +87,8 @@ function extractJsonObject(raw: string): string {
   return trimmed.slice(start, end + 1);
 }
 
-function parseVariants(raw: string): DraftVariant[] {
-  const parsed = JSON.parse(extractJsonObject(raw)) as Record<string, unknown>;
-  const helpfulExpert = parsed.helpful_expert;
-  const friendlyPeer = parsed.friendly_peer;
-  const humbleAck = parsed.humble_ack;
-  const directRebuttal = parsed.direct_rebuttal;
-
-  if (typeof helpfulExpert !== 'string' || !helpfulExpert.trim()) {
-    throw new Error('Missing helpful_expert draft');
-  }
-  if (typeof friendlyPeer !== 'string' || !friendlyPeer.trim()) {
-    throw new Error('Missing friendly_peer draft');
-  }
-  if (typeof humbleAck !== 'string' || !humbleAck.trim()) {
-    throw new Error('Missing humble_ack draft');
-  }
-  if (typeof directRebuttal !== 'string' || !directRebuttal.trim()) {
-    throw new Error('Missing direct_rebuttal draft');
-  }
-
-  return [
-    { tone: 'helpful_expert', text: helpfulExpert.trim() },
-    { tone: 'friendly_peer', text: friendlyPeer.trim() },
-    { tone: 'humble_ack', text: humbleAck.trim() },
-    { tone: 'direct_rebuttal', text: directRebuttal.trim() },
-  ];
-}
-
-function buildSystemPrompt(brandContextPath?: string): string {
-  const brandContext = loadBrandContext(brandContextPath);
+function buildSystemPrompt(signal: PipelineSignal, selectedTone: ToneItem, brandContextPath?: string): string {
+  const brandContext = loadBrandContext(brandContextPath ?? BRAND_CONTEXT_REF);
   const parts: string[] = [];
   
   if (brandContext) {
@@ -119,30 +99,20 @@ function buildSystemPrompt(brandContextPath?: string): string {
     'You write social media replies for Byreal, a DeFi/Web3 trading platform.',
     'Produce concise, brand-safe replies under 280 characters each.',
     'Do not overpromise. Do not mention private or unverifiable facts.',
-    'Return strict JSON only.',
+    'Return the reply as plain text. No JSON. No markdown.',
     '',
-    'Tone guide:',
-    '- helpful_expert: Professional, authoritative, offers concrete value and expertise.',
-    '- friendly_peer: Casual, relatable, peer-to-peer energy, approachable and warm.',
-    '- humble_ack: Grateful, appreciative, acknowledges without being pushy.',
-    '- direct_rebuttal: Addresses concerns constructively, empathetic but clear.'
+    `Action: ${signal.suggestedAction ?? signal.actionType}`,
+    `Reply direction: ${signal.replyAngle ?? signal.angle}`,
+    '',
+    'You MUST follow this selected tone exactly:',
+    JSON.stringify(selectedTone, null, 2),
+    '',
+    'Use the selected tone description to shape wording, specificity, and call-to-action.',
   );
   
   return parts.join('\n');
 }
 
-
-function buildUserPrompt(signal: Signal): string {
-  const categoryName = SIGNAL_CATEGORIES[signal.category] ?? 'unknown_category';
-  return [
-    'Generate exactly four reply variants for this tweet.',
-    `Author: ${signal.author}`,
-    `Category: ${signal.category} (${categoryName})`,
-    `Tweet: ${signal.content}`,
-    'Output JSON object with keys:',
-    '{"helpful_expert":"...","friendly_peer":"...","humble_ack":"...","direct_rebuttal":"..."}',
-  ].join('\n');
-}
 
 function parseSingleToneText(raw: string): string {
   const trimmed = raw.trim();
@@ -150,8 +120,12 @@ function parseSingleToneText(raw: string): string {
     throw new Error('Empty single-tone draft response');
   }
 
-  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+  // Strip markdown code fences first (e.g. ```json\n{...}\n```)
+  const fenceMatch = trimmed.match(/^\s*```(?:json)?\s*\n?([\s\S]*?)\n?\s*```\s*$/);
+  const stripped = fenceMatch ? fenceMatch[1].trim() : trimmed;
+
+  if (stripped.startsWith('{') && stripped.endsWith('}')) {
+    const parsed = JSON.parse(stripped) as Record<string, unknown>;
     const text = parsed.text;
     if (typeof text === 'string' && text.trim()) {
       return text.trim();
@@ -159,45 +133,55 @@ function parseSingleToneText(raw: string): string {
     throw new Error('Single-tone JSON response missing text');
   }
 
-  return trimmed;
+  return stripped;
 }
 
-function fallbackSingleToneDraft(signal: Signal, tone: DraftTone): string {
-  if (tone === 'helpful_expert') {
-    return `Byreal is built for this use case, @${signal.author} - tighter execution, clearer market context, and practical risk controls for active DeFi traders.`;
+function fallbackSingleToneDraft(signal: PipelineSignal, _strategy: string): string {
+  const author = signal.author;
+  const action = signal.suggestedAction ?? signal.actionType;
+
+  if (action === 'reply_supportive' || action === 'reply') {
+    return `Thanks for the mention, @${author}. We appreciate it and are glad to engage on this.`;
   }
-  if (tone === 'friendly_peer') {
-    return `Great call, @${signal.author} - Byreal has been a smooth setup for tracking positions and reacting faster. Happy to share what is working.`;
+  if (action === 'qrt_positioning' || action === 'qrt') {
+    return `@${author} Great point. On Byreal we're focused on practical execution, happy to share details if useful.`;
   }
-  if (tone === 'humble_ack') {
-    return `Appreciate it, @${signal.author}! Thanks for the mention - let us know if there is anything you'd like us to improve.`;
+  if (action === 'escalate_internal' || action === 'monitor') {
+    return `@${author} Thanks for flagging this. We're monitoring closely and keeping communication clear as facts develop.`;
   }
-  return `Fair point, @${signal.author}. We are actively improving reliability and transparency - if you share the exact pain point, we can address it directly.`;
+  return `@${author} Thanks for sharing. We're following this and will continue to engage thoughtfully.`;
 }
 
-function buildSingleToneUserPrompt(signal: Signal, tone: DraftTone, context?: string): string {
-  const categoryName = SIGNAL_CATEGORIES[signal.category] ?? 'unknown_category';
+function buildSingleToneUserPrompt(signal: PipelineSignal, tone: ToneItem, context?: string): string {
   const contextSection = context ? `Additional context from team: ${context}\n\n` : '';
   return [
     'Generate exactly one reply variant for this tweet.',
     contextSection,
-    `Required tone: ${tone}`,
+    `Required tone id: ${tone.id}`,
+    `Required tone label: ${tone.label}`,
+    `Required tone description: ${tone.description}`,
     `Author: ${signal.author}`,
-    `Category: ${signal.category} (${categoryName})`,
+    `Action: ${signal.suggestedAction ?? signal.actionType}`,
+    `Reply direction: ${signal.replyAngle ?? signal.angle}`,
     `Tweet: ${signal.content}`,
-    'Output either plain text reply only OR JSON object: {"text":"..."}.',
+    'Output ONLY the plain text reply. No JSON wrapping. No markdown fences. No quotes around the text.',
     'Do not output multiple variants.',
   ].join('\n');
 }
 
-export async function generateSingleToneDraft(signal: Signal, tone: DraftTone, context?: string): Promise<string> {
+export async function generateSingleToneDraft(signal: PipelineSignal, tone: DraftTone, context?: string): Promise<string> {
+  const selectedTone = signal.tones.find((item) => item.id === tone)
+    ?? signal.tones.find((item) => item.label === tone)
+    ?? signal.tones[0];
+  if (!selectedTone) {
+    return fallbackSingleToneDraft(signal, tone);
+  }
+
   const mocked = process.env.MOCK_DRAFT_RESPONSE;
   if (mocked) {
-    const variants = parseVariants(mocked);
-    const match = variants.find((item) => item.tone === tone);
-    if (match?.text) {
-      return match.text;
-    }
+    const parsed = JSON.parse(extractJsonObject(mocked)) as Record<string, unknown>;
+    const mockText = parsed[tone];
+    if (typeof mockText === 'string' && mockText.trim()) return mockText.trim();
   }
 
   if (!readSecret('CLAUDE_CODE_OAUTH_TOKEN') && !readSecret('ANTHROPIC_API_KEY')) {
@@ -205,11 +189,11 @@ export async function generateSingleToneDraft(signal: Signal, tone: DraftTone, c
   }
 
   const systemPrompt = [
-    buildSystemPrompt(),
+    buildSystemPrompt(signal, selectedTone),
     'Generate only one reply in the requested tone.',
-    'Return plain text or JSON object with a single "text" field.',
+    'Return plain text only. No JSON. No code fences.',
   ].join('\n');
-  const userPrompt = buildSingleToneUserPrompt(signal, tone, context);
+  const userPrompt = buildSingleToneUserPrompt(signal, selectedTone, context);
 
   try {
     const raw = await callClaudeText({
@@ -217,7 +201,7 @@ export async function generateSingleToneDraft(signal: Signal, tone: DraftTone, c
       userPrompt,
       model: MODEL,
       temperature: TEMPERATURE,
-      maxTokens: 400,
+      maxTokens: MAX_TOKENS,
     });
     return parseSingleToneText(raw);
   } catch {
@@ -226,77 +210,8 @@ export async function generateSingleToneDraft(signal: Signal, tone: DraftTone, c
       userPrompt: `${userPrompt}\nReturn one reply only. No markdown fences.`,
       model: MODEL,
       temperature: TEMPERATURE,
-      maxTokens: 400,
+      maxTokens: MAX_TOKENS,
     });
     return parseSingleToneText(retryRaw);
-  }
-}
-
-export async function generateDraft(signal: Signal): Promise<DraftReply> {
-  const mocked = process.env.MOCK_DRAFT_RESPONSE;
-  if (mocked) {
-    return {
-      signalId: signal.id,
-      variants: parseVariants(mocked),
-      generatedAt: Math.floor(Date.now() / 1000),
-    };
-  }
-
-  if (!readSecret('CLAUDE_CODE_OAUTH_TOKEN') && !readSecret('ANTHROPIC_API_KEY')) {
-    return {
-      signalId: signal.id,
-      variants: [
-        {
-          tone: 'helpful_expert',
-          text: `Byreal offers exactly what you need, ${signal.author}. Built for serious DeFi participants with real-time analytics and liquidity optimization.`,
-        },
-        {
-          tone: 'friendly_peer',
-          text: `Hey ${signal.author}! Using Byreal here — it's been solid for managing positions. Happy to share more!`,
-        },
-        {
-          tone: 'humble_ack',
-          text: `Thanks for the mention, ${signal.author}! Really appreciate it. Let us know if there's anything we can help with.`,
-        },
-        {
-          tone: 'direct_rebuttal',
-          text: `We hear you, ${signal.author}. Here's what Byreal does differently: [feature]. Happy to address any specific concerns!`,
-        },
-      ],
-      generatedAt: Math.floor(Date.now() / 1000),
-    };
-  }
-
-  const systemPrompt = buildSystemPrompt();
-  const userPrompt = buildUserPrompt(signal);
-
-  try {
-    const raw = await callClaudeText({
-      systemPrompt,
-      userPrompt,
-      model: MODEL,
-      temperature: TEMPERATURE,
-      maxTokens: 1200,
-    });
-
-    return {
-      signalId: signal.id,
-      variants: parseVariants(raw),
-      generatedAt: Math.floor(Date.now() / 1000),
-    };
-  } catch {
-    const retryRaw = await callClaudeText({
-      systemPrompt,
-      userPrompt: `${userPrompt}\nOnly output valid JSON object. No markdown fences or additional text.`,
-      model: MODEL,
-      temperature: TEMPERATURE,
-      maxTokens: 1200,
-    });
-
-    return {
-      signalId: signal.id,
-      variants: parseVariants(retryRaw),
-      generatedAt: Math.floor(Date.now() / 1000),
-    };
   }
 }

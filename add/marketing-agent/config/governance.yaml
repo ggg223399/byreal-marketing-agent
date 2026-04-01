@@ -1,0 +1,6 @@
+config_permissions:
+  admin_user_ids: []
+  admin_role_ids: []
+  allowed_user_ids: []
+  allowed_role_ids: []
+  allowed_channel_ids: []

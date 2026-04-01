@@ -1,0 +1,17 @@
+routing:
+  default:
+    channel: noise
+  routes:
+    - match: { suggestedAction: reply_supportive }
+      channel: needs-reply
+    - match: { suggestedAction: qrt_positioning }
+      channel: needs-qrt
+    - match: { suggestedAction: collab_opportunity }
+      channel: collab-opportunities
+    - match: { suggestedAction: escalate_internal }
+      channel: escalation
+    - match: { suggestedAction: like_only }
+      channel: engagement
+    - match: { suggestedAction: explore_signal }
+      channel: trending
+  dedup_key: [tweet_id, channel]

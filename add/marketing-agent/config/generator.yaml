@@ -1,0 +1,10 @@
+# Signal Pipeline v5 — Generator Configuration
+# Generator produces tweet drafts from Reactor output (replyAngle + selected tone).
+# Triggered on-demand when user clicks a tone button in Discord.
+
+model: claude-sonnet-4-5-20250514
+temperature: 0.7
+max_tokens: 400
+
+# Brand context is loaded from the same file as Reactor
+brand_context_ref: ../prompts/brand_context.md

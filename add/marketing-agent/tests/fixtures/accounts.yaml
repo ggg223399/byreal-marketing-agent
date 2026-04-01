@@ -1,0 +1,6 @@
+accounts:
+  core:
+    - handle: jupiter_exchange
+    - handle: orca_so
+  ecosystem:
+    - handle: titan_exchange

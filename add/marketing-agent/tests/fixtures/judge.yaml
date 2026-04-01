@@ -1,0 +1,15 @@
+rules: |
+  You are a social media signal analyst. Judge the importance of this tweet.
+  red - urgent
+  orange - important
+  yellow - worth noting
+  none - ignore
+output_schema:
+  alertLevel:
+    type: enum
+    values: [red, orange, yellow, none]
+    description: Alert level
+  reasoning:
+    type: string
+    max_length: 200
+    description: Reasoning
